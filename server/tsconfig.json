@@ -1,0 +1,40 @@
+{
+    // https://www.typescriptlang.org/tsconfig/
+    "compilerOptions": {
+        // Type Checking
+        "exactOptionalPropertyTypes": true,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitOverride": true,
+        "noImplicitReturns": true,
+        "noPropertyAccessFromIndexSignature": true,
+        "noUncheckedIndexedAccess": true,
+        "strict": true,
+        "useUnknownInCatchVariables": true,
+
+        // Modules
+        "module": "nodenext",
+
+        // Emit
+        "outDir": "build",
+        "removeComments": true,
+        "sourceMap": true,
+
+        // Interop Constraints
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+
+        // Language and Environment
+        "lib": ["es2023"],
+        "target": "es2022",
+
+        // Completeness
+        "skipLibCheck": true
+    },
+    "include": [
+        "src/**/*",
+        "../shared/**.d.ts",
+        "../shared/Server.ts",
+        "../shared/ClientEvents.d.ts",
+        "../shared/ServerEvents.d.ts"
+    ]
+}

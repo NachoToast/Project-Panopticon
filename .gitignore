@@ -1,0 +1,16 @@
+# https://git-scm.com/docs/gitignore
+
+# Dependencies
+node_modules/
+
+# Package Managers
+package-lock.json
+yarn.lock
+.yarn-integrity
+
+# User Generated
+build/
+dist/
+coverage/
+*.log
+.env

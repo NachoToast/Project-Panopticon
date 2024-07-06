@@ -1,0 +1,39 @@
+.user {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+
+    align-items: center;
+
+    gap: 4px;
+}
+
+.user > p {
+    flex-grow: 1;
+}
+
+.user button {
+    background-color: var(--background-tertiary);
+
+    border: solid 1px var(--border-primary);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 32px;
+    height: 32px;
+    fill: var(--text-secondary);
+
+    transition: all 200ms linear;
+    cursor: pointer;
+}
+
+.user button:hover {
+    color: var(--text-primary);
+    background-color: var(--background-secondary);
+}
+
+.user p.admin {
+    color: gold;
+}

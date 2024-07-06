@@ -1,0 +1,39 @@
+{
+    // https://www.typescriptlang.org/tsconfig/
+    "compilerOptions": {
+        // Type Checking
+        "exactOptionalPropertyTypes": true,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitOverride": true,
+        "noImplicitReturns": true,
+        "noPropertyAccessFromIndexSignature": true,
+        "noUncheckedIndexedAccess": true,
+        "strict": true,
+        "useUnknownInCatchVariables": true,
+
+        // Modules
+        "allowImportingTsExtensions": true,
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+
+        // Emit
+        "outDir": "build",
+        "noEmit": true,
+        "removeComments": true,
+        "sourceMap": true,
+
+        // Interop Constraints
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "isolatedModules": true,
+
+        // Language and Environment
+        "lib": ["es2020", "DOM", "DOM.Iterable"],
+        "moduleDetection": "force",
+        "target": "es2020",
+
+        // Completeness
+        "skipLibCheck": true
+    },
+    "include": ["src/**/*", "../shared/**.d.ts"]
+}

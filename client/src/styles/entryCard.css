@@ -1,0 +1,19 @@
+#entry-card {
+    padding: 1em;
+
+    border: solid 1px var(--border-primary);
+    border-radius: 0.25em;
+    background-color: var(--background-secondary);
+
+    box-shadow: 0 0 50px 30px rgba(255, 255, 255, 0.06);
+    min-width: 300px;
+
+    display: flex;
+    flex-direction: column;
+
+    align-items: center;
+}
+
+#entry-card p {
+    color: var(--text-secondary);
+}

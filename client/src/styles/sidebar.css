@@ -1,0 +1,23 @@
+#sidebar {
+    display: flex;
+    flex-direction: column;
+
+    gap: 1em;
+}
+
+#sidebar > div {
+    background-color: var(--background-secondary);
+    border: solid 1px var(--border-primary);
+
+    padding: 1em;
+}
+
+#sidebar > div h3 {
+    text-align: center;
+    margin: 0;
+}
+
+#sidebar > div > div {
+    display: flex;
+    flex-direction: column;
+}

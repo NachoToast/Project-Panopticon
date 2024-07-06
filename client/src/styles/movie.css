@@ -1,0 +1,7 @@
+#movie {
+    background-color: black;
+    box-shadow: 0 0 50px 30px rgba(255, 255, 255, 0.05);
+
+    max-width: 80%;
+    flex-grow: 1;
+}

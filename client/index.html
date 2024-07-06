@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Project Panopticon</title>
+    </head>
+    <body>
+        <script type="module" src="/src/main.ts"></script>
+
+        <div id="entry-card" hidden>
+            <h1></h1>
+            <input
+                id="username-input"
+                name="username"
+                type="text"
+                pattern="^(\w|\s){2,24}$"
+                placeholder="Name"
+                minlength="2"
+                maxlength="24"
+                hidden
+            />
+            <p class="description"></p>
+        </div>
+
+        <video id="movie" controls hidden></video>
+
+        <div id="sidebar" hidden>
+            <div id="waiting-room" hidden>
+                <h3>Waiting Room (0)</h3>
+                <div></div>
+            </div>
+
+            <div id="cinema" hidden>
+                <h3>Cinema (0)</h3>
+                <div></div>
+            </div>
+        </div>
+    </body>
+</html>
