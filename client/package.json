@@ -17,7 +17,8 @@
         "typecheck": "tsc",
         "lint": "eslint src --max-warnings=0",
         "check-all": "pnpm run typecheck && pnpm run lint",
-        "dev": "vite --host"
+        "start": "vite preview --host --port=1730",
+        "dev": "vite --host --port=1730"
     },
     "devDependencies": {
         "@eslint/js": "^9.6.0",
