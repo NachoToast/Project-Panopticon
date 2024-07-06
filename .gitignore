@@ -9,8 +9,5 @@ yarn.lock
 .yarn-integrity
 
 # User Generated
-build/
-dist/
 coverage/
 *.log
-.env

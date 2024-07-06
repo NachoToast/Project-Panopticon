@@ -1,0 +1,6 @@
+dist/
+
+public/data/*
+!public/data/put movie here.txt
+
+settings.json

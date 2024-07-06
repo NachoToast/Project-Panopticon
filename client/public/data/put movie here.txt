@@ -1,0 +1,1 @@
+put the movie file and any subtitles here, then add the file name and type to settings.json

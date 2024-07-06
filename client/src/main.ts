@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import settings from '../settings.json';
 import { Cinema, EntryCard, Movie, User, WaitingRoom } from './controllers';
 import { ClientEvents, ServerEvents } from './shared';
 import './styles';
@@ -8,8 +9,8 @@ import {
     makeBackgroundCanvas,
 } from './util';
 
-export const MOVIE_SOURCE = 'movie.mp4';
-export const MOVIE_TYPE = 'video/mp4';
+export const MOVIE_SOURCE = `data/${settings.file}`;
+export const MOVIE_TYPE = settings.type;
 
 export const socket: Socket<ServerEvents.All, ClientEvents.All> = io(
     `ws://${location.host.replace(location.port, '5000')}`,
