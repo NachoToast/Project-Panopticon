@@ -58,7 +58,6 @@ export class Admins extends Room {
             if (targetUser === null) return;
 
             for (const user of this.getIdenticalUsers(targetUser.ip)) {
-                console.log(user.username);
                 user.socket.emit(ServerEvents.Connection.Rejected, reason);
                 user.socket.disconnect();
                 socket.broadcast
