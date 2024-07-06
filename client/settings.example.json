@@ -1,4 +1,11 @@
 {
     "file": "movie.mp4",
-    "type": "video/mp4"
+    "type": "video/mp4",
+    "subtitles": [
+        {
+            "label": "English",
+            "file": "english.vtt",
+            "srclang": "en"
+        }
+    ]
 }

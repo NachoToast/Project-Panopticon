@@ -1,4 +1,4 @@
-import { MOVIE_SOURCE, MOVIE_TYPE, socket } from '../main';
+import { MOVIE_SOURCE, MOVIE_TYPE, socket, SUBTITLES } from '../main';
 import { ClientEvents, ServerEvents } from '../shared';
 import { getElement } from '../util';
 
@@ -31,8 +31,28 @@ export function addListeners(): void {
         lastSeenPlaying = playing;
         lastSeenTime = time;
 
-        element.setAttribute('type', MOVIE_TYPE);
-        element.src = MOVIE_SOURCE;
+        const source = document.createElement('source');
+        source.type = MOVIE_TYPE;
+        source.src = MOVIE_SOURCE;
+
+        element.appendChild(source);
+
+        for (const subtitle of SUBTITLES) {
+            const track = document.createElement('track');
+            track.kind = 'subtitles';
+
+            track.label = subtitle.label;
+            track.srclang = subtitle.srclang;
+            track.src = `data/${subtitle.file}`;
+
+            element.appendChild(track);
+        }
+
+        const firstTrack = element.querySelectorAll('track')[0];
+
+        if (firstTrack) {
+            firstTrack.default = true;
+        }
 
         update();
     });

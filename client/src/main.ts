@@ -10,7 +10,10 @@ import {
 } from './util';
 
 export const MOVIE_SOURCE = `data/${settings.file}`;
+
 export const MOVIE_TYPE = settings.type;
+
+export const SUBTITLES = settings.subtitles;
 
 export const socket: Socket<ServerEvents.All, ClientEvents.All> = io(
     `ws://${location.host.replace(location.port, '5000')}`,
