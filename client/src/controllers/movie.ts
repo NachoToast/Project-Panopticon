@@ -114,3 +114,18 @@ element.onseeked = (): void => {
         update();
     }
 };
+
+const audioContext = new AudioContext();
+const audioSource = audioContext.createMediaElementSource(element);
+const gainNode = audioContext.createGain();
+
+audioSource.connect(gainNode);
+gainNode.connect(audioContext.destination);
+
+function handleVolumeChange(): void {
+    gainNode.gain.value = 2 + 2 * element.volume;
+}
+
+element.onvolumechange = handleVolumeChange;
+
+handleVolumeChange();
