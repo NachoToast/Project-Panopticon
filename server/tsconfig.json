@@ -30,11 +30,5 @@
         // Completeness
         "skipLibCheck": true
     },
-    "include": [
-        "src/**/*",
-        "../shared/**.d.ts",
-        "../shared/Server.ts",
-        "../shared/ClientEvents.d.ts",
-        "../shared/ServerEvents.d.ts"
-    ]
+    "include": ["src/**/*"]
 }
