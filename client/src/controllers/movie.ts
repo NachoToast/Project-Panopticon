@@ -55,6 +55,8 @@ export function addListeners(): void {
         }
 
         update();
+
+        makeAudioController();
     });
 
     socket.on(ServerEvents.Cinema.Playing, (_, time) => {
@@ -115,17 +117,19 @@ element.onseeked = (): void => {
     }
 };
 
-const audioContext = new AudioContext();
-const audioSource = audioContext.createMediaElementSource(element);
-const gainNode = audioContext.createGain();
+function makeAudioController(): void {
+    const audioContext = new AudioContext();
+    const audioSource = audioContext.createMediaElementSource(element);
+    const gainNode = audioContext.createGain();
 
-audioSource.connect(gainNode);
-gainNode.connect(audioContext.destination);
+    audioSource.connect(gainNode);
+    gainNode.connect(audioContext.destination);
 
-function handleVolumeChange(): void {
-    gainNode.gain.value = 3 + 2 * element.volume;
+    function handleVolumeChange(): void {
+        gainNode.gain.value = 3 + 2 * element.volume;
+    }
+
+    element.onvolumechange = handleVolumeChange;
+
+    handleVolumeChange();
 }
-
-element.onvolumechange = handleVolumeChange;
-
-handleVolumeChange();
