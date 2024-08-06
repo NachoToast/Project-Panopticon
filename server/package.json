@@ -17,7 +17,7 @@
         "typecheck": "tsc --noEmit",
         "lint": "eslint src --max-warnings=0",
         "check-all": "pnpm run typecheck && pnpm run lint",
-        "start": "node --env-file=.env build/index.js",
+        "start": "node build/index.js",
         "dev": "node --import tsx --env-file=.env --watch-path=src --disable-warning=ExperimentalWarning src/index.ts"
     },
     "dependencies": {
