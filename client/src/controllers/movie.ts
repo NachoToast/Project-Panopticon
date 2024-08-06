@@ -37,7 +37,11 @@ export function addListeners(): void {
 
         element.appendChild(source);
 
-        for (const subtitle of SUBTITLES) {
+        for (const subtitle of SUBTITLES as {
+            label: string;
+            srclang: string;
+            file: string;
+        }[]) {
             const track = document.createElement('track');
             track.kind = 'subtitles';
 
