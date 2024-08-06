@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      vite:
+        specifier: ^5.3.5
+        version: 5.3.5
     devDependencies:
       '@eslint/js':
         specifier: ^9.6.0
@@ -23,9 +27,6 @@ importers:
       typescript-eslint:
         specifier: ^7.15.0
         version: 7.15.0(eslint@9.6.0)(typescript@5.5.3)
-      vite:
-        specifier: ^5.3.3
-        version: 5.3.3
 
 packages:
 
@@ -778,8 +779,8 @@ packages:
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
 
-  vite@5.3.3:
-    resolution: {integrity: sha512-NPQdeCU0Dv2z5fu+ULotpuq5yfCS1BzKUIPhNbP3YBfAMGJXbt2nS+sbTFu+qchaqWTD+H3JK++nRwr6XIcp6A==}
+  vite@5.3.5:
+    resolution: {integrity: sha512-MdjglKR6AQXQb9JGiS7Rc2wC6uMjcm7Go/NHNO63EwiJXfuk9PgqiP/n5IDJCziMkfw9n4Ubp7lttNwz+8ZVKA==}
     engines: {node: ^18.0.0 || >=20.0.0}
     hasBin: true
     peerDependencies:
@@ -1540,7 +1541,7 @@ snapshots:
     dependencies:
       punycode: 2.3.1
 
-  vite@5.3.3:
+  vite@5.3.5:
     dependencies:
       esbuild: 0.21.5
       postcss: 8.4.39
