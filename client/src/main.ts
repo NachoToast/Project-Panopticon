@@ -3,11 +3,7 @@ import settings from '../settings.json';
 import { Cinema, EntryCard, Movie, User, WaitingRoom } from './controllers';
 import { ClientEvents, ServerEvents } from './shared';
 import './styles';
-import {
-    doCompatibilityChecks,
-    getUsername,
-    makeBackgroundCanvas,
-} from './util';
+import { getUsername, makeBackgroundCanvas } from './util';
 
 export const MOVIE_SOURCE = `data/${settings.file}`;
 
@@ -37,9 +33,6 @@ async function handleLoad(): Promise<void> {
         title: 'Project Panopticon',
         description: 'Checking browser compatibility...',
     });
-
-    const isCompatible = await doCompatibilityChecks();
-    if (!isCompatible) return;
 
     const username = await getUsername();
 

@@ -6,3 +6,11 @@
     max-height: 100%;
     flex-grow: 1;
 }
+
+#movie::-webkit-media-text-track-container {
+    transform: translateY(-50px) !important;
+}
+
+#movie::-webkit-media-text-track-display {
+    line-height: 1.6 !important;
+}
