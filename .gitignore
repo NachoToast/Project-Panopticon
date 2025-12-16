@@ -11,3 +11,6 @@ yarn.lock
 # User Generated
 coverage/
 *.log
+
+# Show directories
+show_processing/*/
