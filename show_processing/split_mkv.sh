@@ -1,51 +1,49 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-SUBTITLE_TRACK_INDEX=0 
+set -euo pipefail
 
-if [ -z "$1" ]; then
-    echo "Usage: $0 <path_to_folder>"
-    exit 1
+FF=ffmpeg
+INPUT_DIR="${1:-}"
+
+if [[ -z "$INPUT_DIR" || ! -d "$INPUT_DIR" ]]; then
+  echo "Usage: $0 /path/to/folder"
+  exit 1
 fi
 
-INPUT_DIR="$(realpath "$1")"
+# Normalize path
+INPUT_DIR="$(realpath "$INPUT_DIR")"
+OUTDIR="$INPUT_DIR/viewing_ready"
 
-OUTPUT_DIR="${INPUT_DIR}/viewing_ready"
+mkdir -p "$OUTDIR"
 
-echo "Input Directory: ${INPUT_DIR}"
+shopt -s nullglob
 
-if [ ! -d "$OUTPUT_DIR" ]; then
-    mkdir -p "$OUTPUT_DIR"
-fi
+for INPUT in "$INPUT_DIR"/*.mkv; do
+  NAME="$(basename "$INPUT" .mkv)"
 
-find "$INPUT_DIR" -maxdepth 1 -type f -name "*.mkv" -print0 | while IFS= read -r -d $'\0' MKV_FULLPATH; do
-    
-    MKV_FILENAME=$(basename "$MKV_FULLPATH")
-    FILENAME_NO_EXT="${MKV_FILENAME%.*}"
-    echo -e "\nProcessing file: **${MKV_FILENAME}**"
+  OUTPUT_MP4="$OUTDIR/$NAME.mp4"
+  OUTPUT_VTT="$OUTDIR/$NAME.vtt"
 
-    MP4_OUTPUT="${OUTPUT_DIR}/${FILENAME_NO_EXT}.mp4"
-    VTT_OUTPUT="${OUTPUT_DIR}/${FILENAME_NO_EXT}.vtt"
+  echo "=========================================="
+  echo "Processing: $INPUT"
+  echo "Output video: $OUTPUT_MP4"
+  echo "Output subs:  $OUTPUT_VTT"
+  echo "=========================================="
 
-    if [ -f "$MP4_OUTPUT" ] && [ -f "$VTT_OUTPUT" ]; then
-        continue
-    fi
+  "$FF" -y -i "$INPUT" \
+    -map 0:v:0 \
+    -map 0:a:0 \
+    -c:v copy \
+    -c:a aac \
+    -b:a 192k \
+    "$OUTPUT_MP4"
 
-    echo "  - Extracting Subtitle Track **#${SUBTITLE_TRACK_INDEX}** to: ${VTT_OUTPUT}"
-    
-    ffmpeg -i "$MKV_FULLPATH" -map 0:s:$SUBTITLE_TRACK_INDEX -c:s webvtt -y "$VTT_OUTPUT" 2>/dev/null
-    
-    if [ $? -ne 0 ]; then
-        echo "  *** WARNING: Subtitle extraction failed for ${MKV_FILENAME}. Check if track ${SUBTITLE_TRACK_INDEX} exists."
-    fi
+  "$FF" -y -i "$INPUT" \
+    -map 0:s:0 \
+    -c:s webvtt \
+    "$OUTPUT_VTT" 2>/dev/null || true
 
-    ffmpeg -i "$MKV_FULLPATH" -map 0:v:0 -map 0:a:0 -c:v copy -c:a aac -b:a 128k -tag:v hvc1 -y "$MP4_OUTPUT" 2>/dev/null
-    
-    if [ $? -ne 0 ]; then
-        echo "  *** ERROR: Video conversion failed for ${MKV_FILENAME}. ***"
-    else
-        echo "  - Conversion completed successfully."
-    fi
-
+  echo
 done
 
-echo -e "\n--- All Conversions Complete ---"
+echo "Done! Output in: $OUTDIR"
