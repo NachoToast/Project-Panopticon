@@ -33,7 +33,11 @@ for INPUT in "$INPUT_DIR"/*.mkv; do
   "$FF" -y -i "$INPUT" \
     -map 0:v:0 \
     -map 0:a:0 \
-    -c:v copy \
+    -c:v libx264 \
+    -preset slow \
+    -crf 18 \
+    -pix_fmt yuv420p \
+    -movflags +faststart \
     -c:a aac \
     -b:a 192k \
     "$OUTPUT_MP4"
