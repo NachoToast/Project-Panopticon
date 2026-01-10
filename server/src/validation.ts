@@ -58,7 +58,7 @@ export async function validateConnection(socket: ServerSocket): Promise<void> {
 
     activeUsernames.add(usernameLower);
 
-    const isAdmin = Rooms.Admins.isEmpty() && username === 'NachoToast';
+    const isAdmin = Rooms.Admins.isEmpty();
 
     const user = new User(socket, username, isAdmin);
 
