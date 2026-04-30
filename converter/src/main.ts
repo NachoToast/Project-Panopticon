@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { doTranscode } from "./doTranscode";
 import { getTargetExtension, getTargetFolder } from "./getInputs";
-import { ProgressLogger } from "./progressLogger";
 
 const folder = await getTargetFolder();
 
@@ -27,18 +26,6 @@ if (!existsSync(outDir)) {
     mkdirSync(outDir);
 }
 
-const padAmount = Math.max(...inputFiles.map(x => basename(x).length)) + 1;
-
-const logger = new ProgressLogger(inputFiles.map(x => basename(x).padEnd(padAmount, " ")))
-
-const promises = await Promise.allSettled(inputFiles.map((file, i) => {
-    return doTranscode(file, join(outDir, basename(file)), x => logger.log(i, x));
-}))
-
-logger.close();
-
-for (const promise of promises) {
-    if (promise.status === 'fulfilled') continue;
-
-    console.error(promise.reason)
+for (const file of inputFiles) {
+    await doTranscode(file, join(outDir, basename(file)));
 }
