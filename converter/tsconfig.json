@@ -1,0 +1,41 @@
+{
+    // https://www.typescriptlang.org/tsconfig/
+    "compilerOptions": {
+        // Type Checking
+        "exactOptionalPropertyTypes": true,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitOverride": true,
+        "noImplicitReturns": true,
+        "noPropertyAccessFromIndexSignature": true,
+        "strict": true,
+        "useUnknownInCatchVariables": true,
+        // Modules
+        "allowImportingTsExtensions": true,
+        "module": "Preserve",
+        "moduleResolution": "bundler",
+        "paths": {
+            "@/*": [
+                "./src/*"
+            ],
+        },
+        // Emit
+        "noEmit": true,
+        // Interop Constraints
+        "forceConsistentCasingInFileNames": true,
+        "verbatimModuleSyntax": true,
+        // Language and Environment
+        "lib": [
+            "ESNext"
+        ],
+        "moduleDetection": "force",
+        "target": "ESNext",
+        // Completeness
+        "skipLibCheck": true,
+        "types": [
+            "bun"
+        ]
+    },
+    "include": [
+        "src",
+    ]
+}
