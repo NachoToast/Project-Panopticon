@@ -19,14 +19,10 @@ async function prompt(text: string): Promise<string> {
 }
 
 export async function getTargetFolder(): Promise<string> {
-    return "D:\\Yarr\\Invincible\\Season 1";
-
-    // return await prompt("Enter target folder path: ");
+    return await prompt("Enter target folder path: ");
 }
 
 export async function getTargetExtension(): Promise<string> {
-    return "mkv";
-
     const value = await prompt("Enter file extension: ");
 
     return value.replaceAll('.', '');
