@@ -1,0 +1,8 @@
+packages:
+  - 'client'
+  - 'server'
+
+minimumReleaseAge: 10080
+blockExoticSubdeps: true
+allowBuilds:
+  esbuild: set this to true or false
