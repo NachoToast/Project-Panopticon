@@ -35,6 +35,7 @@ export function addListeners(): void {
         source.type = MOVIE_TYPE;
         source.src = MOVIE_SOURCE;
 
+        element.volume = 0.15; // Set volume to 15%, 100% is always crazy loud
         element.appendChild(source);
 
         for (const subtitle of SUBTITLES as {
