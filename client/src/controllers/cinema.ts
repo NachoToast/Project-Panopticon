@@ -40,7 +40,7 @@ function setHidden(hidden: boolean): void {
 }
 
 export function isHidden(): boolean {
-    return element.hidden;
+    return element.hidden !== false;
 }
 
 function updateTitle(): void {
