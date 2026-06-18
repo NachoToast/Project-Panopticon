@@ -18,6 +18,7 @@
 
         // Emit
         "outDir": "build",
+        "rootDir": "./src",
         "noEmit": true,
         "removeComments": true,
         "sourceMap": true,
