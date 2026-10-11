@@ -17,7 +17,7 @@ The project is split into three workspaces:
 
 ### Key Concepts
 
--   **Admin** — The first user to connect. Controls playback and can approve, kick, or ban users from the waiting room.
+-   **Admin** — The first user to connect. Controls playback, approves waiting-room users into the cinema, and can kick or ban any non-admin user (in the waiting room or the cinema).
 -   **Cinema** — The main room where approved users watch video together. Playback state (playing/paused/time) is synchronized by the admin.
 -   **Waiting Room** — Where non-admin users wait until approved by the admin.
 
@@ -31,7 +31,7 @@ The `client/src/shared/` and `server/src/shared/` directories contain mirrored t
 
 ## Prerequisites
 
--   [Node.js](https://nodejs.org/) (v20+)
+-   [Node.js](https://nodejs.org/) (v20.11+)
 -   [pnpm](https://pnpm.io/)
 -   [Bun](https://bun.sh/) (only needed for the converter)
 -   [ffmpeg](https://ffmpeg.org/) (only needed for the converter)
@@ -121,7 +121,7 @@ Prompts for a folder path and file extension, then transcodes all matching files
 
 ## Code Quality
 
-Each workspace has a `check-all` script that runs typechecking and linting:
+Each workspace has a `check-all` script — the client and server run typechecking and linting, while the converter runs typechecking only:
 
 ```sh
 # Run in each workspace
@@ -134,7 +134,7 @@ Or individually:
 
 ```sh
 pnpm typecheck   # TypeScript type checking
-pnpm lint        # ESLint
+pnpm lint        # ESLint (client and server only)
 ```
 
 ### Formatting
@@ -184,4 +184,4 @@ Project-Panopticon/
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
