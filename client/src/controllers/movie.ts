@@ -4,6 +4,9 @@ import { getElement } from '../util';
 
 const element = getElement<HTMLVideoElement>('#movie');
 
+const LOCAL_STORAGE_KEY = 'volume';
+const DEFAULT_VOLUME = 0.15; // 100% is always crazy loud
+
 let isAdmin = false;
 let lastSeenPlaying = false;
 let lastSeenTime = 0;
@@ -35,7 +38,7 @@ export function addListeners(): void {
         source.type = MOVIE_TYPE;
         source.src = MOVIE_SOURCE;
 
-        element.volume = 0.15; // Set volume to 15%, 100% is always crazy loud
+        element.volume = getStoredVolume();
         element.appendChild(source);
 
         for (const subtitle of SUBTITLES as {
@@ -122,6 +125,16 @@ element.onseeked = (): void => {
     }
 };
 
+/** Returns the user's saved volume, or the default if none is saved. */
+function getStoredVolume(): number {
+    const stored = Number.parseFloat(localStorage.getItem(LOCAL_STORAGE_KEY) ?? '');
+
+    // NaN covers missing, empty, and corrupt values; the range check covers hand-edited ones
+    if (Number.isNaN(stored) || stored < 0 || stored > 1) return DEFAULT_VOLUME;
+
+    return stored;
+}
+
 function makeAudioController(): void {
     const audioContext = new AudioContext();
     const audioSource = audioContext.createMediaElementSource(element);
@@ -131,6 +144,8 @@ function makeAudioController(): void {
     gainNode.connect(audioContext.destination);
 
     function handleVolumeChange(): void {
+        localStorage.setItem(LOCAL_STORAGE_KEY, String(element.volume));
+
         gainNode.gain.value = 3 + 2 * element.volume;
     }
 
