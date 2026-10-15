@@ -2,6 +2,7 @@ import { IssueStore } from '../diagnostics/issues';
 import { IssueCode } from '../diagnostics/snapshot';
 import { SubtitleSettings } from '../config';
 import { createProjectionClock, ProjectionClock } from './clock';
+import { classifyPlayRejection } from './mediaErrors';
 import {
     ClientEvents,
     isCommandRejection,
@@ -163,21 +164,6 @@ export interface PlaybackController {
     dispose(): void;
 }
 
-/** The names play() rejections are classified by (see mediaErrors.ts). */
-function classifyPlayRejectionName(name: string | undefined): IssueCode | null {
-    if (name === 'NotAllowedError') {
-        return IssueCode.PlaybackInteractionRequired;
-    }
-    if (name === 'AbortError') {
-        // A newer play/pause/load interrupted this attempt: expected.
-        return null;
-    }
-    if (name === 'NotSupportedError') {
-        return IssueCode.MediaUnusable;
-    }
-    return IssueCode.Unexpected;
-}
-
 export function createPlaybackController(deps: PlaybackControllerDeps): PlaybackController {
     const { element, channel, store, media } = deps;
     const now = deps.now ?? ((): number => performance.now());
@@ -262,7 +248,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
                     typeof failure === 'object' && failure !== null && 'name' in failure
                         ? (failure as { readonly name?: unknown }).name
                         : undefined;
-                const code = classifyPlayRejectionName(typeof name === 'string' ? name : undefined);
+                const code = classifyPlayRejection(typeof name === 'string' ? name : undefined);
                 if (code !== null) {
                     report(code, failure);
                 }
