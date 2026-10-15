@@ -1,5 +1,5 @@
-import { IssueStore, normalizeErrorName } from './issues';
-import { IssueCode } from './snapshot';
+import { IssueStore } from './issues';
+import { IssueCode, normalizeErrorName, withErrorName } from './snapshot';
 
 /** Diagnostic type strings recorded by the runtime handlers. */
 export const DIAGNOSTIC_TYPES = {
@@ -26,9 +26,11 @@ export interface InstallRuntimeHandlersOptions {
 }
 
 /**
- * Conservative filter for script origins that look like browser extensions.
- * This is informational only: matching does not prove an extension caused a
- * failure, and nothing may present it as a first-party app failure either.
+ * Broad detector for script origins that do not look first-party. The
+ * detector is deliberately broad — any http(s) URL whose origin differs from
+ * the app's — while attribution stays conservative: a match does not prove
+ * an extension caused the failure, and callers must not present it as a
+ * first-party app failure either.
  */
 export function looksLikeExtensionOrigin(filename: unknown, appOrigin: string | undefined): boolean {
     if (typeof filename !== 'string' || filename.length === 0) {
@@ -40,7 +42,19 @@ export function looksLikeExtensionOrigin(filename: unknown, appOrigin: string | 
     if (appOrigin === undefined || appOrigin.length === 0) {
         return false;
     }
-    return /^https?:\/\//.test(filename) && !filename.startsWith(appOrigin);
+    if (!/^https?:\/\//.test(filename)) {
+        return false;
+    }
+    try {
+        // Compare origins, not prefixes: a lookalike such as
+        // 'http://localhost:1730.evil.com/x.js' must not pass as first-party.
+        return new URL(filename).origin !== appOrigin;
+    } catch {
+        // Not a parsable http(s) URL — including prefix lookalikes whose
+        // "port" is not numeric. Such a string can never be one of the app's
+        // own script URLs, so treat it as foreign (still a diagnostic only).
+        return true;
+    }
 }
 
 /**
@@ -78,20 +92,14 @@ function handleScriptError(event: unknown, store: IssueStore, appOrigin: string 
 
         if (looksLikeExtensionOrigin(filename, appOrigin)) {
             store.recordDiagnostic({
-                type: DIAGNOSTIC_TYPES.ExtensionError,
-                at: Date.now(),
-                ...(errorName !== undefined ? { errorName } : {}),
+                ...withErrorName(DIAGNOSTIC_TYPES.ExtensionError, Date.now(), errorName),
                 extensionOrigin: true,
             });
             console.debug('[panopticon] recorded non-app script error (possible extension origin)');
             return;
         }
 
-        store.recordDiagnostic({
-            type: DIAGNOSTIC_TYPES.WindowError,
-            at: Date.now(),
-            ...(errorName !== undefined ? { errorName } : {}),
-        });
+        store.recordDiagnostic(withErrorName(DIAGNOSTIC_TYPES.WindowError, Date.now(), errorName));
         store.reportIssue({ code: IssueCode.Unexpected, error: error ?? message });
         console.error(error ?? message ?? event);
     } catch (handlerFailure) {
@@ -104,11 +112,7 @@ function handleRejection(event: unknown, store: IssueStore): void {
         const reason = readEventField(event, 'reason');
         const errorName = normalizeErrorName(reason);
 
-        store.recordDiagnostic({
-            type: DIAGNOSTIC_TYPES.UnhandledRejection,
-            at: Date.now(),
-            ...(errorName !== undefined ? { errorName } : {}),
-        });
+        store.recordDiagnostic(withErrorName(DIAGNOSTIC_TYPES.UnhandledRejection, Date.now(), errorName));
         store.reportIssue({ code: IssueCode.Unexpected, error: reason });
         console.error(reason ?? event);
     } catch (handlerFailure) {

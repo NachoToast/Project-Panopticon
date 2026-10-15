@@ -1,6 +1,6 @@
-import { IssueStore, issueStore, normalizeErrorName } from './diagnostics/issues';
+import { IssueStore, issueStore } from './diagnostics/issues';
 import { DIAGNOSTIC_TYPES, installRuntimeHandlers, RuntimeTarget } from './diagnostics/runtime';
-import { IssueCode } from './diagnostics/snapshot';
+import { IssueCode, normalizeErrorName, withErrorName } from './diagnostics/snapshot';
 
 /** Structural stand-in for the hidden `#startup-fallback` div. */
 export interface StartupFallbackContainer {
@@ -47,10 +47,12 @@ export function renderStartupFallback(container: StartupFallbackContainer | null
 }
 
 /**
- * Waits until the page's DOM (and load event, if still pending) has arrived.
- * `initApp` previously relied on a `load` listener registered inside main.ts;
- * with a dynamic import that listener could be attached too late, so the wait
- * lives here, before the import happens.
+ * Waits until the page is ready for `initApp`. At 'interactive' (or
+ * 'complete') we proceed without waiting for the `load` event — `initApp`
+ * does not depend on subresources having arrived — so the `load` listener
+ * only covers the still-loading case. The wait lives here, before the
+ * dynamic import, because `initApp` previously relied on a `load` listener
+ * registered inside main.ts, which could be attached too late.
  */
 function waitForPageLoad(win: BootstrapWindow): Promise<void> {
     const readyState = win.document.readyState;
@@ -88,11 +90,7 @@ export async function startApp(options: StartAppOptions): Promise<void> {
         await main.initApp();
     } catch (failure) {
         const errorName = normalizeErrorName(failure);
-        options.store.recordDiagnostic({
-            type: DIAGNOSTIC_TYPES.AppInitFailure,
-            at: Date.now(),
-            ...(errorName !== undefined ? { errorName } : {}),
-        });
+        options.store.recordDiagnostic(withErrorName(DIAGNOSTIC_TYPES.AppInitFailure, Date.now(), errorName));
         options.store.reportIssue({ code: IssueCode.AppInit, error: failure });
         renderStartupFallback(getFallbackContainer(), STARTUP_FALLBACK_MESSAGE);
         console.error(STARTUP_FALLBACK_MESSAGE, failure);

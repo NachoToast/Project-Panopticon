@@ -1,9 +1,12 @@
 /**
- * Data contract for the diagnostics layer.
+ * Data contract and pure helpers for the diagnostics layer.
  *
- * This module owns the shapes shared between the issue store, the runtime
- * handlers, and (in PR 2) the UI. It must stay presentation-free and must
- * never import from controllers, styles, or other application modules.
+ * This module owns the shapes shared between the issue store (`issues.ts`),
+ * the runtime handlers (`runtime.ts`), and the report formatter
+ * (`report.ts`), together with small pure helpers over untrusted values:
+ * engine detection, value-kind summaries, safe-token checks, and error-name
+ * extraction. It must stay presentation-free and must never import from
+ * controllers, styles, or other application modules.
  */
 
 /** Maximum retained diagnostic events; oldest entries are evicted first. */
@@ -11,6 +14,12 @@ export const DIAGNOSTIC_HISTORY_LIMIT = 50;
 
 /** Maximum simultaneously active issues; the least recently reported is evicted. */
 export const ACTIVE_ISSUE_LIMIT = 16;
+
+/** Maximum numeric readings kept per diagnostic event; extras are dropped. */
+export const MAX_READINGS_PER_EVENT = 8;
+
+/** Maximum length accepted for error names (and constructor names). */
+export const MAX_NAME_LENGTH = 64;
 
 /** How disruptive an issue is to the core experience. */
 export const enum Severity {
@@ -128,6 +137,20 @@ export interface DiagnosticEvent {
 }
 
 /**
+ * Untrusted input accepted by `IssueStore.recordDiagnostic`: the same fields
+ * as `DiagnosticEvent`, but every value is `unknown` until the store
+ * sanitizes it. Runtime handlers build these directly from DOM events.
+ */
+export interface DiagnosticEventInput {
+    readonly type?: unknown;
+    readonly at?: unknown;
+    readonly errorName?: unknown;
+    readonly mediaErrorCode?: unknown;
+    readonly extensionOrigin?: unknown;
+    readonly readings?: unknown;
+}
+
+/**
  * Derives a coarse engine family from a user agent. Deliberately
  * conservative: anything unparsable reports 'unknown'.
  */
@@ -155,7 +178,7 @@ export function currentEngineFamily(): string {
 }
 
 /** Describes a value by kind only; the value itself never appears in output. */
-export function describeValueKind(value: unknown): string {
+function describeValueKind(value: unknown): string {
     if (value === null) {
         return 'null';
     }
@@ -177,95 +200,42 @@ export function summarizeEventArgs(args: readonly unknown[]): string {
     return `args=${String(args.length)} [${kinds.join(', ')}]`;
 }
 
-/** Header line for exported diagnostics. */
-export const DIAGNOSTICS_HEADER = 'Project Panopticon diagnostics';
-
-const LOCAL_ONLY_NOTE = 'Local-only debug information. Nothing here is collected or uploaded.';
-const MAX_READINGS_PER_EVENT = 8;
-const SAFE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
-
-function toIso(timestamp: number): string {
-    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : 'unknown-time';
+/** Extracts a safe error identifier (the constructor name) from any value. */
+export function normalizeErrorName(error: unknown): string | undefined {
+    if (typeof error !== 'object' || error === null) {
+        return undefined;
+    }
+    try {
+        const name = (error as { readonly name?: unknown }).name;
+        if (typeof name === 'string' && name.length > 0 && name.length <= MAX_NAME_LENGTH) {
+            return name;
+        }
+        const constructor = (error as { readonly constructor?: unknown }).constructor;
+        if (typeof constructor === 'function') {
+            const constructorName = (constructor as { readonly name?: unknown }).name;
+            if (typeof constructorName === 'string' && constructorName.length > 0 && constructorName.length <= MAX_NAME_LENGTH) {
+                return constructorName;
+            }
+        }
+        return 'Object';
+    } catch {
+        // Reading properties from a hostile proxy can throw; never propagate.
+        return 'Object';
+    }
 }
 
-function isSafeToken(value: string): boolean {
+const SAFE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
+
+/** True for short identifier-like tokens safe to render in diagnostics output. */
+export function isSafeToken(value: string): boolean {
     return SAFE_TOKEN_PATTERN.test(value);
 }
 
-export { isSafeToken };
-
-/** Everything `formatDiagnosticsReport` needs; already allowlisted. */
-export interface DiagnosticsReportInput {
-    readonly generatedAt: number;
-    readonly engineFamily: string;
-    readonly activeIssues: readonly Issue[];
-    readonly diagnostics: readonly DiagnosticEvent[];
-    readonly totalIncidentCount: number;
-    readonly retiredIncidentCount: number;
-}
-
-/**
- * Renders a human-readable diagnostics report from allowlisted fields only.
- * Issue codes, error names, numeric codes/readings, markers, timestamps, and
- * coarse engine info may appear; usernames, URLs/IPs, tokens, messages, and
- * stacks may not.
- */
-export function formatDiagnosticsReport(input: DiagnosticsReportInput): string {
-    const lines: string[] = [
-        DIAGNOSTICS_HEADER,
-        LOCAL_ONLY_NOTE,
-        `Generated: ${toIso(input.generatedAt)}`,
-        `Engine: ${input.engineFamily}`,
-        '',
-        `Active issues (${String(input.activeIssues.length)}, ${String(input.retiredIncidentCount)} retired, ${String(input.totalIncidentCount)} total incidents):`,
-    ];
-
-    if (input.activeIssues.length === 0) {
-        lines.push('  (none)');
-    }
-    for (const issue of input.activeIssues) {
-        const parts = [
-            `${issue.id} code=${issue.code}`,
-            `severity=${issue.severity}`,
-            `blocking=${issue.blocking ? 'yes' : 'no'}`,
-            `occurrences=${String(issue.occurrences)}`,
-            `first=${toIso(issue.firstSeen)}`,
-            `last=${toIso(issue.lastSeen)}`,
-        ];
-        if (issue.mediaId !== undefined && isSafeToken(issue.mediaId)) {
-            parts.push(`media=${issue.mediaId}`);
-        }
-        if (issue.mediaErrorCode !== undefined) {
-            parts.push(`mediaErrorCode=${String(issue.mediaErrorCode)}`);
-        }
-        lines.push(`  - ${parts.join(' ')}`);
-    }
-
-    lines.push('');
-    lines.push(`Diagnostic history (${String(input.diagnostics.length)}/${String(DIAGNOSTIC_HISTORY_LIMIT)} entries):`);
-    if (input.diagnostics.length === 0) {
-        lines.push('  (none)');
-    }
-    for (const event of input.diagnostics) {
-        const parts = [toIso(event.at), event.type];
-        if (event.extensionOrigin === true) {
-            parts.push('origin=EXTENSION_ORIGIN');
-        }
-        if (event.errorName !== undefined) {
-            parts.push(`name=${event.errorName}`);
-        }
-        if (event.mediaErrorCode !== undefined) {
-            parts.push(`mediaErrorCode=${String(event.mediaErrorCode)}`);
-        }
-        if (event.readings !== undefined) {
-            for (const [key, value] of Object.entries(event.readings).slice(0, MAX_READINGS_PER_EVENT)) {
-                if (isSafeToken(key)) {
-                    parts.push(`${key}=${String(value)}`);
-                }
-            }
-        }
-        lines.push(`  - ${parts.join(' ')}`);
-    }
-
-    return lines.join('\n');
+/** Builds a diagnostic event input, omitting `errorName` when unavailable. */
+export function withErrorName(type: string, at: number, errorName?: string): DiagnosticEventInput {
+    return {
+        type,
+        at,
+        ...(errorName !== undefined ? { errorName } : {}),
+    };
 }

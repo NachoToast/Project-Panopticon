@@ -1,9 +1,9 @@
+import { DIAGNOSTICS_HEADER, formatDiagnosticsReport } from './report';
 import {
     ACTIVE_ISSUE_LIMIT,
     currentEngineFamily,
     DiagnosticEvent,
-    formatDiagnosticsReport,
-    DIAGNOSTICS_HEADER,
+    DiagnosticEventInput,
     DIAGNOSTIC_HISTORY_LIMIT,
     isSafeToken,
     Issue,
@@ -12,6 +12,8 @@ import {
     IssueInput,
     IssueListener,
     IssueSnapshot,
+    MAX_NAME_LENGTH,
+    MAX_READINGS_PER_EVENT,
     RecoveryAction,
     Severity,
 } from './snapshot';
@@ -102,15 +104,23 @@ export const ISSUE_CATALOG: Readonly<Record<IssueCode, IssueDefinition>> = {
     },
 };
 
+// Freeze the catalog and its recovery-action arrays once at module scope.
+// `toPublicIssue` hands these arrays to subscribers, and the shallow
+// `Object.freeze` on each issue object alone would leave the shared arrays
+// (and definitions) mutable by anyone holding an issue.
+for (const definition of Object.values(ISSUE_CATALOG)) {
+    Object.freeze(definition.recoveryActions);
+    Object.freeze(definition);
+}
+Object.freeze(ISSUE_CATALOG);
+
 const GLOBAL_SCOPE = 'global';
 
 /** Incident family shared by related media source errors (network + decode). */
 const MEDIA_PLAYBACK_INCIDENT = 'media-playback';
 
 const MAX_MEDIA_ID_LENGTH = 64;
-const MAX_NAME_LENGTH = 64;
 const MAX_EVENT_TYPE_LENGTH = 64;
-const MAX_READINGS_PER_EVENT = 8;
 
 /** Module-local incident counter; ids must not depend on a secure context. */
 let incidentCounter = 0;
@@ -164,11 +174,30 @@ function isIssueCode(value: unknown): value is IssueCode {
     return typeof value === 'string' && Object.prototype.hasOwnProperty.call(ISSUE_CATALOG, value);
 }
 
-/** Reads a finite numeric `code`/`mediaErrorCode` property from any value. */
+/**
+ * Valid `MediaError.code` values: 1-4 per the HTML spec (MEDIA_ERR_CUSTOM,
+ * MEDIA_ERR_NETWORK, MEDIA_ERR_DECODE, MEDIA_ERR_SRC_NOT_SUPPORTED), plus 5,
+ * which some engines report when encrypted-media support is absent. Other
+ * finite numbers (e.g. an HTTP status like 404) are dropped rather than
+ * rendered as a media error code.
+ */
+const MIN_MEDIA_ERROR_CODE = 1;
+const MAX_MEDIA_ERROR_CODE = 5;
+
+function isMediaErrorCode(value: unknown): value is number {
+    return (
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        value >= MIN_MEDIA_ERROR_CODE &&
+        value <= MAX_MEDIA_ERROR_CODE
+    );
+}
+
+/** Reads a valid `MediaError.code` (range 1-5) from `code`/`mediaErrorCode` on any value. */
 function extractMediaErrorCode(value: unknown): number | undefined {
     const record = toRecord(value);
     const candidate = record['code'] ?? record['mediaErrorCode'];
-    return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : undefined;
+    return isMediaErrorCode(candidate) ? candidate : undefined;
 }
 
 /** Tolerates garbage, primitives, circular references, and hostile proxies. */
@@ -187,30 +216,6 @@ function normalizeIssueInput(input: unknown): NormalizedIssueInput {
         error,
         mediaErrorCode,
     };
-}
-
-/** Extracts a safe error identifier (the constructor name) from any value. */
-export function normalizeErrorName(error: unknown): string | undefined {
-    if (typeof error !== 'object' || error === null) {
-        return undefined;
-    }
-    try {
-        const name = (error as { readonly name?: unknown }).name;
-        if (typeof name === 'string' && name.length > 0 && name.length <= MAX_NAME_LENGTH) {
-            return name;
-        }
-        const constructor = (error as { readonly constructor?: unknown }).constructor;
-        if (typeof constructor === 'function') {
-            const constructorName = (constructor as { readonly name?: unknown }).name;
-            if (typeof constructorName === 'string' && constructorName.length > 0 && constructorName.length <= MAX_NAME_LENGTH) {
-                return constructorName;
-            }
-        }
-        return 'Object';
-    } catch {
-        // Reading properties from a hostile proxy can throw; never propagate.
-        return 'Object';
-    }
 }
 
 /**
@@ -242,7 +247,7 @@ function pickErrorName(value: unknown): { errorName?: string } {
 }
 
 function pickMediaErrorCode(value: unknown): { mediaErrorCode?: number } {
-    return typeof value === 'number' && Number.isFinite(value) ? { mediaErrorCode: value } : {};
+    return isMediaErrorCode(value) ? { mediaErrorCode: value } : {};
 }
 
 function pickReadings(value: unknown): { readings?: Readonly<Record<string, number>> } {
@@ -285,7 +290,7 @@ export interface IssueStore {
     resolveIssue(id: string): void;
     subscribeIssues(listener: IssueListener): () => void;
     getIssueSnapshot(): IssueSnapshot;
-    recordDiagnostic(event: DiagnosticEvent): void;
+    recordDiagnostic(event: DiagnosticEventInput): void;
     exportDiagnostics(): string;
 }
 
@@ -322,15 +327,19 @@ export function createIssueStore(now: () => number = Date.now): IssueStore {
             let oldestKey: string | undefined;
             let oldestSeen = Number.POSITIVE_INFINITY;
             for (const [key, incident] of active) {
-                if (incident.lastSeen < oldestSeen) {
+                if (Number.isFinite(incident.lastSeen) && incident.lastSeen < oldestSeen) {
                     oldestSeen = incident.lastSeen;
                     oldestKey = key;
                 }
             }
-            if (oldestKey === undefined) {
+            // A broken clock can leave every `lastSeen` non-finite, with no
+            // comparable value among them; fall back to dropping the first
+            // entry so the cap still holds instead of growing unbounded.
+            const keyToEvict = oldestKey ?? active.keys().next().value;
+            if (keyToEvict === undefined) {
                 break;
             }
-            active.delete(oldestKey);
+            active.delete(keyToEvict);
             retiredIncidents += 1;
         }
     }
@@ -406,7 +415,7 @@ export function createIssueStore(now: () => number = Date.now): IssueStore {
         return snapshot();
     }
 
-    function recordDiagnostic(event: DiagnosticEvent): void {
+    function recordDiagnostic(event: DiagnosticEventInput): void {
         try {
             history.push(sanitizeDiagnosticEvent(event, now()));
             while (history.length > DIAGNOSTIC_HISTORY_LIMIT) {

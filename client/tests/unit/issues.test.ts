@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createIssueStore, ISSUE_CATALOG, normalizeErrorName } from '../../src/diagnostics/issues';
-import { ACTIVE_ISSUE_LIMIT, IssueCode, IssueInput, IssueSnapshot } from '../../src/diagnostics/snapshot';
+import { createIssueStore, ISSUE_CATALOG } from '../../src/diagnostics/issues';
+import {
+    ACTIVE_ISSUE_LIMIT,
+    IssueCode,
+    IssueInput,
+    IssueSnapshot,
+    MAX_READINGS_PER_EVENT,
+    normalizeErrorName,
+    RecoveryAction,
+} from '../../src/diagnostics/snapshot';
 
 afterEach((): void => {
     vi.restoreAllMocks();
@@ -196,6 +204,139 @@ describe('issue store', (): void => {
 
         const [issue] = store.getIssueSnapshot().issues;
         expect(issue?.mediaErrorCode).toBe(3);
+    });
+
+    it('stops notifying torn-down subscribers while later subscribers keep receiving', (): void => {
+        const store = createIssueStore();
+        const receivedByA: IssueSnapshot[] = [];
+        const receivedByB: IssueSnapshot[] = [];
+
+        const teardownA = store.subscribeIssues((snapshot: IssueSnapshot): void => {
+            receivedByA.push(snapshot);
+        });
+        store.subscribeIssues((snapshot: IssueSnapshot): void => {
+            receivedByB.push(snapshot);
+        });
+        teardownA();
+
+        store.reportIssue({ code: IssueCode.ConnectionLost });
+
+        // A saw only the replay from subscribing; B saw replay plus the report.
+        expect(receivedByA).toHaveLength(1);
+        expect(receivedByB).toHaveLength(2);
+        expect(receivedByB[1]?.issues[0]?.code).toBe(IssueCode.ConnectionLost);
+    });
+
+    it('keeps safe finite readings and drops unsafe keys and non-finite values', (): void => {
+        const store = createIssueStore();
+
+        // Keys and values are intentionally hostile; they are listed as pairs
+        // because they are data, not identifiers.
+        const readingEntries: readonly (readonly [string, unknown])[] = [
+            ['clock-skew', -12.5],
+            ['buffer_ratio', 0.75],
+            ['has-Dash_case123', 3],
+            ['unsafe key!', 1],
+            ['user@example', 2],
+            ['too-long-token-1234567890-1234567890123456789012345678901234567890', 4],
+            ['notANumber', Number.NaN],
+            ['infinite', Number.POSITIVE_INFINITY],
+            ['aString', '42'],
+        ];
+        const readings: Record<string, unknown> = Object.fromEntries(readingEntries);
+
+        store.recordDiagnostic({ type: 'probe', at: 4242424, readings });
+
+        const report = store.exportDiagnostics();
+        expect(report).toContain('clock-skew=-12.5');
+        expect(report).toContain('buffer_ratio=0.75');
+        expect(report).toContain('has-Dash_case123=3');
+        expect(report).not.toContain('unsafe key');
+        expect(report).not.toContain('user@example');
+        expect(report).not.toContain('too-long-token');
+        expect(report).not.toContain('NaN');
+        expect(report).not.toContain('Infinity');
+        expect(report).not.toContain('aString');
+    });
+
+    it('drops readings beyond the per-event maximum', (): void => {
+        const store = createIssueStore();
+
+        const readings: Record<string, number> = {};
+        for (let index = 0; index < MAX_READINGS_PER_EVENT + 2; index += 1) {
+            readings[`reading-${String(index)}`] = index;
+        }
+        store.recordDiagnostic({ type: 'probe', at: 4242424, readings });
+
+        const report = store.exportDiagnostics();
+        const lastKept = `reading-${String(MAX_READINGS_PER_EVENT - 1)}=${String(MAX_READINGS_PER_EVENT - 1)}`;
+        expect(report).toContain(lastKept);
+        expect(report).not.toContain(`reading-${String(MAX_READINGS_PER_EVENT)}=`);
+        expect(report).not.toContain(`reading-${String(MAX_READINGS_PER_EVENT + 1)}=`);
+    });
+
+    it('freezes catalog-backed recovery actions against mutation', (): void => {
+        const store = createIssueStore();
+        store.reportIssue({ code: IssueCode.ConnectionLost });
+
+        const [issue] = store.getIssueSnapshot().issues;
+        if (issue === undefined) {
+            throw new Error('expected a ConnectionLost issue');
+        }
+
+        // `recoveryActions` aliases the catalog's array; mutating it must
+        // throw instead of corrupting every future issue of that code.
+        const actions = issue.recoveryActions as unknown as RecoveryAction[];
+        expect(() => {
+            actions.push(RecoveryAction.Retry);
+        }).toThrow();
+        const definition = ISSUE_CATALOG[IssueCode.ConnectionLost] as unknown as { message: string };
+        expect(() => {
+            definition.message = 'tampered';
+        }).toThrow();
+        expect(ISSUE_CATALOG[IssueCode.ConnectionLost].recoveryActions).toHaveLength(2);
+    });
+
+    it('still caps active issues when every timestamp is non-finite', (): void => {
+        const store = createIssueStore((): number => Number.NaN);
+
+        for (let index = 0; index < ACTIVE_ISSUE_LIMIT + 4; index += 1) {
+            store.reportIssue({ code: IssueCode.InvalidServerState, mediaId: `media-${String(index)}` });
+        }
+
+        // No finite lastSeen exists to compare; eviction must fall back to
+        // dropping an entry rather than letting the active set grow unbounded.
+        expect(store.getIssueSnapshot().issues).toHaveLength(ACTIVE_ISSUE_LIMIT);
+    });
+
+    it('keeps the cap when one report lands on a non-finite timestamp', (): void => {
+        let clock: number = Number.NaN;
+        const store = createIssueStore((): number => clock);
+
+        store.reportIssue({ code: IssueCode.InvalidServerState, mediaId: 'media-nan' });
+        clock = 0;
+        for (let index = 0; index < 20; index += 1) {
+            clock += 1;
+            store.reportIssue({ code: IssueCode.InvalidServerState, mediaId: `media-${String(index)}` });
+        }
+
+        expect(store.getIssueSnapshot().issues).toHaveLength(ACTIVE_ISSUE_LIMIT);
+    });
+
+    it('keeps only real MediaError codes and drops lookalikes like HTTP statuses', (): void => {
+        const store = createIssueStore();
+
+        store.reportIssue({ code: IssueCode.MediaNetwork, mediaId: 'movie', detail: { code: 404 } });
+        expect(store.getIssueSnapshot().issues[0]?.mediaErrorCode).toBeUndefined();
+
+        store.reportIssue({ code: IssueCode.MediaDecode, mediaId: 'movie', detail: { code: 3 } });
+        expect(store.getIssueSnapshot().issues[0]?.mediaErrorCode).toBe(3);
+
+        store.recordDiagnostic({ type: 'probe', at: 4242424, mediaErrorCode: 500 });
+        const report = store.exportDiagnostics();
+        expect(report).not.toContain('mediaErrorCode=404');
+        expect(report).not.toContain('mediaErrorCode=500');
+        expect(report).toContain('mediaErrorCode=3');
     });
 });
 

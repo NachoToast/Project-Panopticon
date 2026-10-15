@@ -168,6 +168,10 @@ describe('looksLikeExtensionOrigin', (): void => {
         expect(looksLikeExtensionOrigin('moz-extension://abc/x.js', appOrigin)).toBe(true);
         expect(looksLikeExtensionOrigin('https://evil.example.com/x.js', appOrigin)).toBe(true);
 
+        // Lookalike hosts must not pass as first-party via a prefix match.
+        expect(looksLikeExtensionOrigin('http://localhost:1730.evil.com/x.js', appOrigin)).toBe(true);
+        expect(looksLikeExtensionOrigin('https://localhost:1730.evil.com/x.js', appOrigin)).toBe(true);
+
         expect(looksLikeExtensionOrigin('http://localhost:1730/src/main.ts', appOrigin)).toBe(false);
         expect(looksLikeExtensionOrigin('/src/main.ts', appOrigin)).toBe(false);
         expect(looksLikeExtensionOrigin('eval at <anonymous>', appOrigin)).toBe(false);

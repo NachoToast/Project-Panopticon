@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createIssueStore } from '../../src/diagnostics/issues';
 import {
     detectEngineFamily,
+    DiagnosticEventInput,
     DIAGNOSTIC_HISTORY_LIMIT,
-    DiagnosticEvent,
     IssueCode,
     summarizeEventArgs,
 } from '../../src/diagnostics/snapshot';
@@ -45,10 +45,10 @@ describe('diagnostic ring', (): void => {
         const garbage: unknown = 'garbage';
 
         expect(() => {
-            store.recordDiagnostic(hostile as DiagnosticEvent);
+            store.recordDiagnostic(hostile as DiagnosticEventInput);
         }).not.toThrow();
         expect(() => {
-            store.recordDiagnostic(garbage as DiagnosticEvent);
+            store.recordDiagnostic(garbage as DiagnosticEventInput);
         }).not.toThrow();
 
         const report = store.exportDiagnostics();
