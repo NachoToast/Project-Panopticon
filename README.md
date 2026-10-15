@@ -26,8 +26,8 @@ The project is split into three workspaces:
 The `client/src/shared/` and `server/src/shared/` directories contain mirrored type definitions:
 
 -   `BaseUser` — Minimal user representation (`id`, `username`, `isAdmin`, `joinedAt`)
--   `ClientEvents` — Events sent from client to server (`cinema:play`, `cinema:pause`, `cinema:seek`, `admin:kick`, `admin:ban`, `admin:approve`)
--   `ServerEvents` — Events sent from server to client (`connection:accepted/rejected`, `cinema:joined/left/users/playing/paused/seeked`, `waiting-room:joined/left`, `admin:added/left/users/kicked/banned/approved`)
+-   `ClientEvents` — Events sent from client to server (`cinema:play`, `cinema:pause`, `cinema:seek`, `cinema:select`, `admin:kick`, `admin:ban`, `admin:approve`)
+-   `ServerEvents` — Events sent from server to client (`connection:accepted/rejected`, `cinema:joined/left/users/playing/paused/seeked/state/command-rejected`, `waiting-room:joined/left`, `admin:added/left/users/kicked/banned/approved`)
 
 ## Prerequisites
 

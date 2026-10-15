@@ -1,3 +1,4 @@
+import { isMediaId } from '../shared';
 import { DiagnosticEvent, DIAGNOSTIC_HISTORY_LIMIT, isSafeToken, Issue, MAX_READINGS_PER_EVENT } from './snapshot';
 
 /**
@@ -50,7 +51,11 @@ export function formatDiagnosticsReport(input: DiagnosticsReportInput): string {
             `first=${toIso(issue.firstSeen)}`,
             `last=${toIso(issue.lastSeen)}`,
         ];
-        if (issue.mediaId !== undefined && isSafeToken(issue.mediaId)) {
+        // Media ids are wire identities (normalized relative paths like
+        // `films/a.mp4`), so they are gated by the shared wire validation
+        // (`isMediaId`, which caps length at 255 and rejects `..`/unsafe
+        // characters), not by the token rule used for other fields.
+        if (issue.mediaId !== undefined && isMediaId(issue.mediaId)) {
             parts.push(`media=${issue.mediaId}`);
         }
         if (issue.mediaErrorCode !== undefined) {

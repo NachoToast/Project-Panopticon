@@ -93,15 +93,36 @@ describe('exportDiagnostics', (): void => {
         }
     });
 
+    it('renders media ids that are valid wire identities (dots and paths)', (): void => {
+        const store = createIssueStore();
+
+        // Real media identities are normalized relative paths (see
+        // shared/PlaybackState.ts `normalizeMediaId`), so the export must
+        // render ids like `movie.mp4` and `films/a.mp4`, not just opaque
+        // `[A-Za-z0-9_-]` tokens.
+        store.reportIssue({ code: IssueCode.MediaNetwork, mediaId: 'movie.mp4' });
+        store.reportIssue({ code: IssueCode.MediaDecode, mediaId: 'films/a.mp4' });
+
+        const report = store.exportDiagnostics();
+        expect(report).toContain('media=movie.mp4');
+        expect(report).toContain('media=films/a.mp4');
+    });
+
     it('omits unsafe media ids from the exported report', (): void => {
         const store = createIssueStore();
 
         store.reportIssue({ code: IssueCode.MediaMismatch, mediaId: 'http://10.0.0.7/logged-token' });
+        store.reportIssue({ code: IssueCode.MediaNetwork, mediaId: '..%2fevil' });
+        store.reportIssue({ code: IssueCode.MediaDecode, mediaId: 'a/../b.mp4' });
+        store.reportIssue({ code: IssueCode.SlowLoading, mediaId: 'a'.repeat(256) });
 
         const report = store.exportDiagnostics();
         expect(report).toContain('media-mismatch');
         expect(report).not.toContain('10.0.0.7');
         expect(report).not.toContain('logged-token');
+        expect(report).not.toContain('%2f');
+        expect(report).not.toContain('../');
+        expect(report).not.toContain('media=');
     });
 });
 
