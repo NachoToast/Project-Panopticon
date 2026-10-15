@@ -196,6 +196,35 @@ describe('Room membership semantics', (): void => {
         await rooms.Admins.add(replacement.user);
         expect(rooms.Admins.isEmpty()).toBe(false);
     });
+
+    it('broadcasts onLeave exactly once when disconnect races a failing join', async (): Promise<void> => {
+        // The join neither resolves nor rejects until the test says so.
+        let rejectJoin: ((error: Error) => void) | undefined;
+        const { user, socket } = makeUser(
+            'dana',
+            false,
+            (): Promise<void> =>
+                new Promise<void>((_, reject): void => {
+                    rejectJoin = reject;
+                }),
+        );
+
+        const pending = rooms.Cinema.add(user);
+        await flush(); // add() is now parked on the pending join
+
+        socket.emit('disconnect'); // removal runs while the join is pending
+        await flush();
+
+        rejectJoin?.(new Error('adapter died mid-join'));
+        await expect(pending).rejects.toThrow('adapter died mid-join');
+
+        // The disconnect already unseated (and broadcast Left for) the
+        // member; the join-failure rollback must not broadcast it again.
+        const leftCount = socket.broadcasts.filter(
+            ([room, event]) => room === 'cinema' && event === 'cinema:left',
+        ).length;
+        expect(leftCount).toBe(1);
+    });
 });
 
 describe('Admin approve targeting', (): void => {

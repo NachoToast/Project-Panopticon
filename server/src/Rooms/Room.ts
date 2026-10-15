@@ -173,6 +173,12 @@ export abstract class Room {
      * room's cleanup independent.
      */
     private unseat(user: User): void {
+        // A disconnect may have already removed the member while their
+        // admission join was still pending; when that join then fails,
+        // the rollback must not strip listeners or broadcast onLeave a
+        // second time.
+        if (!this.users.has(user.id)) return;
+
         for (const owned of this.ownedListeners.get(user.id) ?? []) {
             user.socket.off(owned.event, owned.listener);
         }
