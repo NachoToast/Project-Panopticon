@@ -1,7 +1,8 @@
 import { io, Socket } from 'socket.io-client';
-import settings from '../settings.json';
+import { readSocketOverride, resolveSocketUrl, settingsProblem } from './config';
 import { Cinema, EntryCard, Movie, User, WaitingRoom } from './controllers';
-import { summarizeEventArgs } from './diagnostics/snapshot';
+import { issueStore } from './diagnostics/issues';
+import { IssueCode, summarizeEventArgs } from './diagnostics/snapshot';
 import { ClientEvents, ServerEvents } from './shared';
 import './styles';
 import {
@@ -9,14 +10,12 @@ import {
     makeBackgroundCanvas
 } from './util';
 
-export const MOVIE_SOURCE = `data/${settings.file}`;
-
-export const MOVIE_TYPE = settings.type;
-
-export const SUBTITLES = settings.subtitles;
+// Re-exported for the controllers that import them from here; the derivation
+// itself lives in config.ts.
+export { MOVIE_SOURCE, MOVIE_TYPE, SUBTITLES } from './config';
 
 export const socket: Socket<ServerEvents.All, ClientEvents.All> = io(
-    `ws://${location.host.replace(location.port, '5000')}`,
+    resolveSocketUrl(location, readSocketOverride(location.search)),
     { autoConnect: false },
 );
 
@@ -26,6 +25,14 @@ export const socket: Socket<ServerEvents.All, ClientEvents.All> = io(
  * event (bootstrap owns that wait).
  */
 export async function initApp(): Promise<void> {
+    if (settingsProblem !== null) {
+        // Reported here rather than at module scope so issue listeners are
+        // guaranteed to be attached; the flow continues (a usable entry card
+        // still matters) while the unusable movie source surfaces as an issue.
+        console.debug('[panopticon] invalid settings.json:', settingsProblem);
+        issueStore.reportIssue({ code: IssueCode.InvalidConfiguration });
+    }
+
     makeBackgroundCanvas();
 
     Cinema.addListeners();

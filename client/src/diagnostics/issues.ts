@@ -81,6 +81,13 @@ export const ISSUE_CATALOG: Readonly<Record<IssueCode, IssueDefinition>> = {
         blocking: false,
         recoveryActions: [],
     },
+    [IssueCode.InvalidConfiguration]: {
+        code: IssueCode.InvalidConfiguration,
+        message: 'The movie settings could not be read, so playback may not start. Ask the host to check the shared movie files.',
+        severity: Severity.Warning,
+        blocking: false,
+        recoveryActions: [],
+    },
     [IssueCode.InvalidServerState]: {
         code: IssueCode.InvalidServerState,
         message: 'The server sent room state that cannot be used. Reloading will resynchronize the room.',

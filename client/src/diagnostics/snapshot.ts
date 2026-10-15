@@ -59,6 +59,8 @@ export const enum IssueCode {
     ConnectionLost = 'connection-lost',
     /** Browser storage is unavailable. */
     StorageUnavailable = 'storage-unavailable',
+    /** The client's movie settings are missing or malformed. */
+    InvalidConfiguration = 'invalid-configuration',
     /** The server sent state the client cannot interpret. */
     InvalidServerState = 'invalid-server-state',
     /** Application bootstrap failed (module load or initialization). */
