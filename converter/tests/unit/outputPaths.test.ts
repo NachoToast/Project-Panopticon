@@ -31,6 +31,17 @@ describe("deriveOutputPath", (): void => {
     it("appends .mp4 when the input has no extension", (): void => {
         expect(deriveOutputPath("/a/clip", "/out")).toBe("/out/clip.mp4");
     });
+
+    it("pins dotfile behavior: .mkv → .mkv.mp4, .hidden → .hidden.mp4", (): void => {
+        // node:path's parse treats a leading dot as part of the name, not an
+        // extension — dotfile inputs gain `.mp4` instead of losing their name.
+        expect(deriveOutputPath("/m/.mkv", "/out")).toBe("/out/.mkv.mp4");
+        expect(deriveOutputPath("/m/.hidden", "/out")).toBe("/out/.hidden.mp4");
+    });
+
+    it("drops a trailing dot: clip. → clip.mp4", (): void => {
+        expect(deriveOutputPath("/m/clip.", "/out")).toBe("/out/clip.mp4");
+    });
 });
 
 describe("describeOutputRefusal", (): void => {

@@ -1,4 +1,4 @@
-import { basename, join, parse, resolve } from "node:path";
+import { basename, join, parse, resolve } from 'node:path';
 
 /**
  * Pure ffmpeg argument and output-path construction.
@@ -22,20 +22,29 @@ import { basename, join, parse, resolve } from "node:path";
  * Not checked here, deliberately:
  * - MaxBR/MaxVBV: we encode with CRF (quality-targeted, no fixed bitrate), so
  *   there is nothing meaningful to compare pre-encode.
- * - Reference-frame count / DPB (MaxDpbMbs 32,768): libx264 clamps its
- *   reference count on its own when `-level 4.1` is passed. Approximated.
+ * - Reference-frame count / DPB (MaxDpbMbs 32,768): the encoder's business;
+ *   the constant below is kept for completeness, not enforcement.
  */
+// TODO(levels): level 4.1 is hardcoded in the five user-facing message
+// strings inside checkLevel41Envelope and in the function's own name. If
+// another level ever becomes selectable (4.2, 5.1, ...), extract a LEVELS
+// table and template the messages off it instead of cloning this module.
 export const H264_LEVEL_41 = {
     maxMacroblocksPerSecond: 245_760,
     maxFrameSizeInMacroblocks: 8_192,
     maxFrameRate: 68.75,
+    /** Informational only — never read by the envelope check. Kept because
+     *  it completes the Table A-1 level row for future multi-level work. */
     maxDpbMacroblocks: 32_768,
 } as const;
 
 /** A frame's size in 16×16 macroblocks; H.264 levels count capacity in MBs,
  *  so each pixel dimension is rounded UP (a partially covered macroblock
  *  still has to be coded). */
-export function macroblockDimensions(width: number, height: number): {
+export function macroblockDimensions(
+    width: number,
+    height: number,
+): {
     widthMb: number;
     heightMb: number;
     frameMb: number;
@@ -67,16 +76,17 @@ export type EnvelopeCheck =
     | {
           ok: false;
           code:
-              | "invalid-dimensions"
-              | "unknown-fps"
-              | "exceeds-max-frame-size"
-              | "exceeds-max-frame-rate"
-              | "exceeds-max-macroblocks-per-second";
+              | 'invalid-dimensions'
+              | 'unknown-fps'
+              | 'exceeds-max-frame-size'
+              | 'exceeds-max-frame-rate'
+              | 'exceeds-max-macroblocks-per-second';
           message: string;
           measured: { width: number; height: number; fps: number | null };
       };
 
-const count = (value: number): string => Math.round(value).toLocaleString("en-US");
+const count = (value: number): string =>
+    Math.round(value).toLocaleString('en-US');
 
 /**
  * Can this width×height@fps be encoded as H.264 level 4.1?
@@ -85,7 +95,9 @@ const count = (value: number): string => Math.round(value).toLocaleString("en-US
  * caller turns them into a clear CLI error. Unknown frame rates are rejected
  * as unvalidated rather than assumed safe.
  */
-export function checkLevel41Envelope(measurements: EnvelopeMeasurements): EnvelopeCheck {
+export function checkLevel41Envelope(
+    measurements: EnvelopeMeasurements,
+): EnvelopeCheck {
     const { width, height, fps } = measurements;
 
     const dimensionsValid =
@@ -97,7 +109,7 @@ export function checkLevel41Envelope(measurements: EnvelopeMeasurements): Envelo
     if (!dimensionsValid) {
         return {
             ok: false,
-            code: "invalid-dimensions",
+            code: 'invalid-dimensions',
             message:
                 `Cannot validate ${width}×${height} against H.264 level 4.1: ` +
                 `width and height must be positive numbers ` +
@@ -109,7 +121,7 @@ export function checkLevel41Envelope(measurements: EnvelopeMeasurements): Envelo
     if (fps === null || !Number.isFinite(fps) || fps <= 0) {
         return {
             ok: false,
-            code: "unknown-fps",
+            code: 'unknown-fps',
             message:
                 `Frame rate of the ${width}×${height} input could not be ` +
                 `determined, so its level 4.1 compliance is unvalidated. ` +
@@ -124,7 +136,7 @@ export function checkLevel41Envelope(measurements: EnvelopeMeasurements): Envelo
     if (frameMb > H264_LEVEL_41.maxFrameSizeInMacroblocks) {
         return {
             ok: false,
-            code: "exceeds-max-frame-size",
+            code: 'exceeds-max-frame-size',
             message:
                 `${width}×${height} needs ${count(frameMb)} macroblocks per frame ` +
                 `(${widthMb}×${heightMb} 16×16 blocks), exceeding H.264 level 4.1 ` +
@@ -137,7 +149,7 @@ export function checkLevel41Envelope(measurements: EnvelopeMeasurements): Envelo
     if (fps > H264_LEVEL_41.maxFrameRate) {
         return {
             ok: false,
-            code: "exceeds-max-frame-rate",
+            code: 'exceeds-max-frame-rate',
             message:
                 `${width}×${height} @ ${fps.toFixed(2)} fps exceeds H.264 level 4.1 ` +
                 `MaxFR (${H264_LEVEL_41.maxFrameRate} fps). Convert with a lower frame ` +
@@ -151,7 +163,7 @@ export function checkLevel41Envelope(measurements: EnvelopeMeasurements): Envelo
     if (macroblocksPerSecond > H264_LEVEL_41.maxMacroblocksPerSecond) {
         return {
             ok: false,
-            code: "exceeds-max-macroblocks-per-second",
+            code: 'exceeds-max-macroblocks-per-second',
             message:
                 `${width}×${height} @ ${fps.toFixed(2)} fps produces ` +
                 `${count(macroblocksPerSecond)} macroblocks per second, exceeding ` +
@@ -177,6 +189,11 @@ export function checkLevel41Envelope(measurements: EnvelopeMeasurements): Envelo
  *   example.mp4  → <outDir>/example.mp4   (re-transcode; output lives in
  *                                           outDir, so it never collides with
  *                                           the source file itself)
+ *
+ * node:path's parse treats a LEADING dot as part of the name, not an
+ * extension, so dotfile inputs gain `.mp4` instead of losing their name
+ * (`.mkv` → `.mkv.mp4`, `.hidden` → `.hidden.mp4`); a trailing dot is
+ * dropped (`clip.` → `clip.mp4`).
  */
 export function deriveOutputPath(input: string, outDir: string): string {
     const { name } = parse(basename(input));
@@ -221,9 +238,12 @@ export function describeOutputRefusal(
  * Verified against ffmpeg 9.0.2 (`ffmpeg -h muxer=mp4`, `-h encoder=libx264`):
  * - `-f mp4` forces the MP4 muxer regardless of the output file name —
  *   renaming an MKV without this would keep the Matroska container.
- * - `-level 4.1` makes libx264 enforce level 4.1 limits (it clamps reference
- *   frames etc. on its own); the preflight envelope check in doTranscode
- *   rejects impossible inputs before ffmpeg is even spawned.
+ * - `-level 4.1` only sets the level flag libx264 writes into the stream.
+ *   It does NOT make libx264 enforce MaxFS/MaxMBPS: an impossible
+ *   combination merely prints `... > level limit ...` warnings on stderr,
+ *   still exits 0, and the (higher) level flag is written anyway. The
+ *   preflight envelope in doTranscode is the ONLY enforcement; on success,
+ *   doTranscode additionally scans for those warnings and surfaces them.
  * - `-y` is safe here because `output` is a converter-owned temp file
  *   (`.tmp-<name>.mp4`); promotion to the final name is an explicit rename.
  * - `-nostats` + `-progress pipe:1` keep stderr clean for diagnostics and
@@ -232,21 +252,33 @@ export function describeOutputRefusal(
  */
 export function buildFfmpegArgs(input: string, output: string): string[] {
     return [
-        "-hide_banner",
-        "-nostats",
-        "-y",
-        "-progress", "pipe:1",
-        "-i", input,
-        "-c:v", "libx264",
-        "-level", "4.1",
-        "-pix_fmt", "yuv420p",
-        "-preset", "slow",
-        "-crf", "22",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-ac", "2",
-        "-movflags", "+faststart",
-        "-f", "mp4",
+        '-hide_banner',
+        '-nostats',
+        '-y',
+        '-progress',
+        'pipe:1',
+        '-i',
+        input,
+        '-c:v',
+        'libx264',
+        '-level',
+        '4.1',
+        '-pix_fmt',
+        'yuv420p',
+        '-preset',
+        'slow',
+        '-crf',
+        '22',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-ac',
+        '2',
+        '-movflags',
+        '+faststart',
+        '-f',
+        'mp4',
         output,
     ];
 }

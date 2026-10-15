@@ -13,17 +13,22 @@ export class StderrTail {
     constructor(readonly maxBytes: number = 64 * 1024) {}
 
     push(chunk: Buffer | Uint8Array | string): void {
-        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk);
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
 
         this.buffer =
-            this.buffer.length === 0 ? bytes : Buffer.concat([this.buffer, bytes]);
+            this.buffer.length === 0
+                ? bytes
+                : Buffer.concat([this.buffer, bytes]);
 
         if (this.buffer.length > this.maxBytes) {
             let start = this.buffer.length - this.maxBytes;
 
             // Skip UTF-8 continuation bytes (0b10xxxxxx) so the tail starts on
             // a character boundary.
-            while (start < this.buffer.length && (this.buffer[start]! & 0xc0) === 0x80) {
+            while (
+                start < this.buffer.length &&
+                (this.buffer[start]! & 0xc0) === 0x80
+            ) {
                 start += 1;
             }
 
@@ -36,7 +41,7 @@ export class StderrTail {
     }
 
     tail(): string {
-        return this.buffer.toString("utf8");
+        return this.buffer.toString('utf8');
     }
 }
 
@@ -48,7 +53,7 @@ export class StderrTail {
 export function describeSpawnFailure(binary: string, error: unknown): string {
     const code = (error as NodeJS.ErrnoException | null)?.code;
 
-    if (code === "ENOENT") {
+    if (code === 'ENOENT') {
         return (
             `${binary} was not found on PATH. Install ffmpeg (the brew/apt/zip ` +
             `bundles include ffprobe) or fix PATH so both binaries resolve.`

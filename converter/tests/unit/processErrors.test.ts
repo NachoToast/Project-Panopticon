@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { TranscodeProgress } from "../../src/doTranscode";
+import { findX264LevelWarnings, type TranscodeProgress } from "../../src/doTranscode";
 import {
     collectInputFiles,
     createFileProgress,
@@ -235,6 +235,100 @@ describe("verifyOutputProbe", (): void => {
     });
 });
 
+describe("verifyOutputProbe dimension guard (selection-drift backstop)", (): void => {
+    const good = parseProbeOutput(MP4_FIXTURE);
+
+    it("accepts an output that matches the validated input stream's dimensions", (): void => {
+        expect(
+            verifyOutputProbe(good, {
+                expectAudio: true,
+                sourceVideo: { width: 1920, height: 1080 },
+            }),
+        ).toBeNull();
+    });
+
+    it("accepts small macroblock-padding drift (up to 16px per axis)", (): void => {
+        const padded: MediaProbe = {
+            ...good,
+            video: { ...good.video!, width: 1920, height: 1088 },
+        };
+
+        expect(
+            verifyOutputProbe(padded, {
+                expectAudio: false,
+                sourceVideo: { width: 1920, height: 1080 },
+            }),
+        ).toBeNull();
+    });
+
+    it("rejects an output encoded from a different stream than the envelope measured", (): void => {
+        // The cover-art failure mode: envelope measured a 300×300 cover,
+        // ffmpeg encoded a 4K feature (x264 only warns, exit 0).
+        const wrongStream: MediaProbe = {
+            ...good,
+            video: { ...good.video!, width: 3840, height: 2160 },
+        };
+
+        const message = verifyOutputProbe(wrongStream, {
+            expectAudio: false,
+            sourceVideo: { width: 300, height: 300 },
+        });
+
+        expect(message).toMatch(/300×300/);
+        expect(message).toMatch(/3840×2160/);
+        expect(message).toMatch(/different stream/i);
+    });
+
+    it("rejects an output that shrinks below the tolerance", (): void => {
+        const shrunk: MediaProbe = {
+            ...good,
+            video: { ...good.video!, width: 100, height: 100 },
+        };
+
+        expect(
+            verifyOutputProbe(shrunk, {
+                expectAudio: false,
+                sourceVideo: { width: 1920, height: 1080 },
+            }),
+        ).toMatch(/different stream/i);
+    });
+
+    it("rejects an output with unusable dimensions when dimensions are expected", (): void => {
+        const dimensionless: MediaProbe = {
+            ...good,
+            video: { ...good.video!, width: Number.NaN, height: Number.NaN },
+        };
+
+        expect(
+            verifyOutputProbe(dimensionless, {
+                expectAudio: false,
+                sourceVideo: { width: 1920, height: 1080 },
+            }),
+        ).toMatch(/dimension/i);
+    });
+});
+
+describe("findX264LevelWarnings", (): void => {
+    it("extracts x264 level-limit warning lines from retained stderr", (): void => {
+        const stderr = [
+            "[libx264 @ 0x76e5028a80] frame MB size (240x135) > level limit (8192)",
+            "[libx264 @ 0x76e5028a80] MB rate (972000) > level limit (245760)",
+            "frame=  30 fps=0.0 q=-1.0 size=     256KiB time=00:00:01.00",
+        ].join("\n");
+
+        const warnings = findX264LevelWarnings(stderr);
+
+        expect(warnings).toHaveLength(2);
+        expect(warnings[0]).toContain("frame MB size");
+        expect(warnings[1]).toContain("MB rate");
+    });
+
+    it("returns empty for clean stderr", (): void => {
+        expect(findX264LevelWarnings("frame= 30 fps=1.0 speed=1x\n")).toEqual([]);
+        expect(findX264LevelWarnings("")).toEqual([]);
+    });
+});
+
 describe("formatProgressLine", (): void => {
     const halfway: TranscodeProgress = {
         frame: 150,
@@ -242,6 +336,7 @@ describe("formatProgressLine", (): void => {
         fps: 30,
         speed: "1.5x",
         done: false,
+        durationSeconds: null,
     };
 
     it("renders time, percent, and speed when duration is known", (): void => {
@@ -269,6 +364,7 @@ describe("createFileProgress", (): void => {
         fps: 30,
         speed: "2x",
         done: false,
+        durationSeconds: null,
     };
 
     it("writes nothing when the output is not a TTY", (): void => {
@@ -339,6 +435,23 @@ describe("collectInputFiles", (): void => {
                 "b.mkv",
             ]);
             expect(() => collectInputFiles(dir, "avi")).toThrow(/No avi files/);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("matches `.<ext>` as a case-insensitive suffix, never a bare suffix", (): void => {
+        const dir = mkdtempSync(join(tmpdir(), "panopticon-collect-"));
+
+        try {
+            writeFileSync(join(dir, "a.mkv"), "x");
+            writeFileSync(join(dir, "B.MKV"), "x"); // uppercase extension matches
+            writeFileSync(join(dir, "foomkv"), "x"); // bare suffix must NOT match
+            writeFileSync(join(dir, "note.mkvx"), "x"); // longer suffix must NOT match
+
+            expect(
+                collectInputFiles(dir, "mkv").map((file: string) => basename(file)).sort(),
+            ).toEqual(["B.MKV", "a.mkv"]);
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
