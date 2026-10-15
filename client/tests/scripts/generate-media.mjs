@@ -43,8 +43,15 @@ function run(command, args) {
     }
 
     if (result.status !== 0) {
+        // A child killed by a signal has status null; report the signal
+        // instead of a confusing "failed with status null".
+        const reason =
+            result.signal !== null
+                ? `killed by signal ${result.signal}`
+                : `failed with status ${result.status}`;
+
         throw new Error(
-            `${command} ${args.join(' ')}\nfailed with status ${result.status}:\n${result.stderr}`,
+            `${command} ${args.join(' ')}\n${reason}:\n${result.stderr}`,
         );
     }
 
@@ -98,24 +105,43 @@ function verify(clip) {
     }
 }
 
-mkdirSync(outputDir, { recursive: true });
+function main() {
+    mkdirSync(outputDir, { recursive: true });
 
-for (const clip of clips) {
-    const output = resolve(outputDir, clip.name);
+    for (const clip of clips) {
+        const output = resolve(outputDir, clip.name);
 
-    if (existsSync(output)) {
-        if (!force) {
-            console.log(`${clip.name}: already exists, skipping (--force to regenerate)`);
-            continue;
+        // An existing file is only trusted if it still verifies; a truncated
+        // or corrupt fixture would otherwise slip through here and blow up
+        // later with cryptic decode errors inside the browser tests.
+        if (existsSync(output) && !force) {
+            try {
+                verify(clip);
+                console.log(
+                    `${clip.name}: already exists and verifies, skipping (--force to regenerate)`,
+                );
+                continue;
+            } catch {
+                console.warn(`${clip.name}: failed verification, regenerating`);
+            }
         }
 
-        unlinkSync(output);
+        if (existsSync(output)) {
+            unlinkSync(output);
+        }
+
+        console.log(`${clip.name}: generating ${DURATION_SECONDS}s ${clip.color} clip...`);
+
+        generate(clip);
+        verify(clip);
+
+        console.log(`${clip.name}: ok (h264/aac)`);
     }
+}
 
-    console.log(`${clip.name}: generating ${DURATION_SECONDS}s ${clip.color} clip...`);
-
-    generate(clip);
-    verify(clip);
-
-    console.log(`${clip.name}: ok (h264/aac)`);
+try {
+    main();
+} catch (error) {
+    console.error(`error: ${error.message}`);
+    process.exitCode = 1;
 }
