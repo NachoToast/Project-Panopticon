@@ -125,13 +125,32 @@ export abstract class Room {
         event: string,
         listener: (...args: never[]) => void | Promise<void>,
     ): void {
+        // socket.io invokes event handlers fire-and-forget: it ignores
+        // the returned promise, so a rejection (e.g. a failing re-seat
+        // join inside the approve handler) would surface as an
+        // unhandledRejection and kill the process on Node >= 15. Every
+        // listener therefore runs inside a guard that routes failures to
+        // the logger instead. Sync throws become rejections here, which
+        // is strictly safer: engine.io would otherwise bubble them up as
+        // uncaught exceptions.
+        const guarded = async (...args: unknown[]): Promise<void> => {
+            try {
+                await listener(...(args as never[]));
+            } catch (error) {
+                this.services.logger.error(
+                    `async "${event}" listener rejected`,
+                    error,
+                );
+            }
+        };
+
         user.socket.on(
             event as ClientEventName,
-            listener as unknown as ClientEvents.All[ClientEventName],
+            guarded as unknown as ClientEvents.All[ClientEventName],
         );
 
         const owned = this.ownedListeners.get(user.id) ?? [];
-        owned.push({ event, listener: listener as (...args: unknown[]) => void });
+        owned.push({ event, listener: guarded });
         this.ownedListeners.set(user.id, owned);
     }
 

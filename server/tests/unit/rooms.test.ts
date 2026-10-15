@@ -256,6 +256,57 @@ describe('Admin approve targeting', (): void => {
     });
 });
 
+describe('async listener failure containment', (): void => {
+    it('routes a rejected re-seat join to the logger, not the process', async (): Promise<void> => {
+        const { rooms, lines } = createTestRooms();
+        const host = makeUser('host', true);
+
+        // The waiter's joins: the initial waiting-room seating succeeds,
+        // the cinema join fails (approve failure), and the re-seat join
+        // back into the waiting room fails too.
+        let waitingRoomJoins = 0;
+        const { user: waiter } = makeUser(
+            'waiter',
+            false,
+            (room: string): Promise<void> => {
+                if (room !== 'waiting-room') {
+                    return Promise.reject(
+                        new Error('cinema adapter unavailable'),
+                    );
+                }
+                waitingRoomJoins += 1;
+                return waitingRoomJoins === 1
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('re-seat adapter unavailable'));
+            },
+        );
+
+        await rooms.Admins.add(host.user);
+        await rooms.WaitingRoom.add(waiter);
+
+        const unhandled: unknown[] = [];
+        const onUnhandledRejection = (reason: unknown): void => {
+            unhandled.push(reason);
+        };
+        process.on('unhandledRejection', onUnhandledRejection);
+        try {
+            host.socket.emit('admin:approve', waiter.toBasic());
+            await flush();
+            await flush();
+            await flush();
+        } finally {
+            process.off('unhandledRejection', onUnhandledRejection);
+        }
+
+        // Both failures land in the logger...
+        expect(lines.join('')).toContain('cinema admission failed');
+        expect(lines.join('')).toContain('admin:approve');
+        // ...and the re-seat rejection never escapes as an
+        // unhandledRejection (process death on Node >= 15).
+        expect(unhandled).toEqual([]);
+    });
+});
+
 describe('WaitingRoom', (): void => {
     it('tracks the ips of current members only', async (): Promise<void> => {
         const rooms = createTestRooms().rooms;
