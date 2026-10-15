@@ -116,6 +116,16 @@ export class FakeMediaElement {
     /** Rejections for upcoming play() calls, consumed oldest-first. */
     public readonly playRejections: unknown[] = [];
 
+    /**
+     * When true, play() promises stay pending until the test settles them
+     * (real elements resolve only once playback actually starts).
+     */
+    public deferPlay = false;
+    private readonly pendingPlays: {
+        resolve: () => void;
+        reject: (error: unknown) => void;
+    }[] = [];
+
     private currentTimeInternal = 0;
     private readonly listeners = new Map<string, { listener: ElementListener; capture: boolean }[]>();
     private childrenInternal: PlaybackChildLike[] = [];
@@ -162,7 +172,25 @@ export class FakeMediaElement {
         }
         this.paused = false;
         this.dispatch('play');
+        if (this.deferPlay) {
+            return new Promise<void>((resolve: () => void, reject: (error: unknown) => void): void => {
+                this.pendingPlays.push({ resolve, reject });
+            });
+        }
         return Promise.resolve();
+    }
+
+    /** Settles the oldest deferred play() promise (rejects with `error`). */
+    public settleNextPlay(error?: unknown): void {
+        const pending = this.pendingPlays.shift();
+        if (pending === undefined) {
+            return;
+        }
+        if (error !== undefined) {
+            pending.reject(error);
+            return;
+        }
+        pending.resolve();
     }
 
     public pause(): void {

@@ -167,6 +167,17 @@ export interface PlaybackController {
 /** readyState value at which duration/currentTime become meaningful. */
 const HAVE_METADATA = 1;
 
+/**
+ * Correction threshold for CONTINUOUS snapshots (Playing/Paused/State):
+ * below it the element's own position is trusted; above it the room's
+ * projected position is enforced. Deliberately NOT applied to seeked
+ * snapshots — an explicit host seek is exact at any distance.
+ */
+const DRIFT_THRESHOLD_SECONDS = 5;
+
+/** Tolerance for applying an EXACT seek (absorbs player rounding). */
+const SEEK_EPSILON_SECONDS = 0.25;
+
 export function createPlaybackController(deps: PlaybackControllerDeps): PlaybackController {
     const { element, channel, store, media, createElement } = deps;
     const now = deps.now ?? ((): number => performance.now());
@@ -202,6 +213,17 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
     let playInFlight = false;
     /** Media identity currently loaded into the element, if any. */
     let loadedMediaId: string | null = null;
+    /**
+     * Media-load generation: bumped by every load restart and disconnect.
+     * Deferred work that belongs to a specific load (the metadata wait, the
+     * slow-load timer) captures it and dies when the load is superseded.
+     */
+    let loadGeneration = 0;
+    /**
+     * A seek deferred until loadedmetadata, with the load generation it
+     * belongs to and whether it must apply exactly (a host seek).
+     */
+    let deferredSeek: { readonly load: number; readonly exact: boolean } | null = null;
 
     // --- diagnostics helpers --------------------------------------------------
 
@@ -269,14 +291,53 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
 
     // --- reconciliation ----------------------------------------------------------
 
+    /** Clamps a position into [0, duration] when the duration is known. */
+    function clampToDuration(position: number): number {
+        const duration = element.duration;
+        if (!Number.isFinite(duration) || duration <= 0) {
+            return Math.max(0, position);
+        }
+        return Math.min(Math.max(0, position), duration);
+    }
+
+    function shouldSeek(target: number, exact: boolean): boolean {
+        const tolerance = exact ? SEEK_EPSILON_SECONDS : DRIFT_THRESHOLD_SECONDS;
+        return Math.abs(element.currentTime - target) > tolerance;
+    }
+
+    /**
+     * Applies the projected position. Before metadata exists the element
+     * cannot seek meaningfully (and the duration needed for clamping is
+     * unknown), so the seek is deferred: it re-runs reconcile() when
+     * loadedmetadata arrives, which re-projects — the LATEST target wins,
+     * not the value first computed.
+     */
+    function applyPosition(target: number, exact: boolean): void {
+        if (element.readyState < HAVE_METADATA) {
+            const pendingExact = deferredSeek?.exact === true || exact;
+            deferredSeek = { load: loadGeneration, exact: pendingExact };
+            return;
+        }
+        opToken += 1; // a seek invalidates in-flight play results
+        programmatic.seeks += 1;
+        element.currentTime = target;
+    }
+
     /** Enforces the freshest projected snapshot on the element. */
-    function reconcile(): void {
+    function reconcile(exact: boolean): void {
         if (!connected) {
             return;
         }
         const projected = projection.project();
         if (projected === null) {
             return;
+        }
+
+        if (media.mediaId !== null) {
+            const target = clampToDuration(projected.position);
+            if (shouldSeek(target, exact)) {
+                applyPosition(target, exact);
+            }
         }
 
         if (projected.playing) {
@@ -311,6 +372,8 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         loadedMediaId = media.mediaId;
         // A new load invalidates operations against the previous one.
         opToken += 1;
+        loadGeneration += 1;
+        deferredSeek = null;
 
         const children: (PlaybackSourceChild | PlaybackTrackChild)[] = [
             createElement.createSource(media.source, media.type),
@@ -345,8 +408,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
             return; // stale revision for this connection epoch
         }
 
-        void kind; // seeked-vs-continuous distinction arrives with exact seeks
-        reconcile();
+        reconcile(kind === 'seeked');
     }
 
     // --- native event handlers ----------------------------------------------------
@@ -359,7 +421,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         if (isAdmin) {
             sendCommand(ClientEvents.Cinema.Play);
         } else {
-            reconcile();
+            reconcile(false);
         }
     }
 
@@ -371,7 +433,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         if (isAdmin) {
             sendCommand(ClientEvents.Cinema.Pause);
         } else {
-            reconcile();
+            reconcile(false);
         }
     }
 
@@ -383,8 +445,18 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         if (isAdmin) {
             sendCommand(ClientEvents.Cinema.Seek);
         } else {
-            reconcile();
+            reconcile(false);
         }
+    }
+
+    /** loadedmetadata: duration is known; run any deferred seek with a FRESH projection. */
+    function onLoadedMetadata(): void {
+        const pending = deferredSeek;
+        deferredSeek = null;
+        if (pending === null || pending.load !== loadGeneration) {
+            return;
+        }
+        reconcile(pending.exact);
     }
 
     function sendCommand(event: PlaybackCommandEvent): void {
@@ -408,6 +480,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         ['play', onNativePlay],
         ['pause', onNativePause],
         ['seeked', onNativeSeeked],
+        ['loadedmetadata', onLoadedMetadata],
         ['volumechange', onVolumeChange],
     ];
 
@@ -467,6 +540,8 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
             connected = false;
             isAdmin = false;
             opToken += 1;
+            loadGeneration += 1;
+            deferredSeek = null;
             element.pause();
             element.controls = false;
             element.hidden = true;

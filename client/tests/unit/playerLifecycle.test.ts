@@ -97,6 +97,183 @@ describe('playback controller: refused play requests', (): void => {
     });
 });
 
+describe('playback controller: delayed metadata seeks', (): void => {
+    it('applies a snapshot position immediately when metadata is already known', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 100, revision: 1 });
+
+        expect(harness.player.currentTime).toBe(100);
+    });
+
+    it('waits for loadedmetadata, then seeks to the LATEST projected target', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        await harness.receivePlayingState({ position: 100, revision: 1 });
+        expect(harness.player.currentTime).toBe(0); // nothing before metadata
+
+        await harness.receivePlayingState({ position: 200, revision: 2 });
+        expect(harness.player.currentTime).toBe(0);
+
+        harness.player.markMetadata(3_600);
+
+        // The freshest projection (200), not the stale 100 computed first.
+        expect(harness.player.currentTime).toBe(200);
+    });
+
+    it('clamps the deferred target against the now-known finite duration', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        await harness.receivePlayingState({ position: 300, revision: 1 });
+        harness.player.markMetadata(250);
+
+        expect(harness.player.currentTime).toBe(250);
+    });
+
+    it('does not seek past the duration when metadata is already known', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(90);
+
+        await harness.receivePlayingState({ position: 600, revision: 1 });
+
+        expect(harness.player.currentTime).toBe(90);
+    });
+});
+
+describe('playback controller: stale async work cannot win', (): void => {
+    it('drops a late play() rejection after a newer pause decided otherwise', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.player.deferPlay = true;
+
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+        harness.player.pauseCalls = 0;
+
+        await harness.receivePausedState({ position: 1, revision: 2 });
+        expect(harness.player.paused).toBe(true);
+
+        // The interrupted play finally reports its refusal — far too late.
+        harness.player.settleNextPlay(playRejection('NotAllowedError'));
+        await harness.settle();
+
+        expect(harness.activeIssueCodes()).toEqual([]);
+        expect(harness.player.paused).toBe(true);
+    });
+
+    it('drops a metadata callback from before a disconnect (no zombie seek)', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        await harness.receivePlayingState({ position: 100, revision: 1 });
+        harness.disconnect('transport close');
+
+        harness.player.markMetadata(3_600);
+
+        expect(harness.player.currentTime).toBe(0);
+    });
+
+    it('treats an interrupted play (AbortError) as an expected cancellation', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.player.deferPlay = true;
+
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+        await harness.receivePausedState({ position: 1, revision: 2 });
+
+        harness.player.settleNextPlay(playRejection('AbortError'));
+        await harness.settle();
+
+        expect(harness.activeIssueCodes()).toEqual([]);
+    });
+});
+
+describe('playback controller: projection-driven reconciliation', (): void => {
+    it('does not rewind a viewer to a frozen timestamp after long playback', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+        expect(harness.player.paused).toBe(false);
+
+        // Ten minutes of wall time pass; the element plays along.
+        harness.tick(600_000);
+        harness.player.currentTime = 600;
+
+        // The viewer pauses locally (a genuine event, no programmatic marker).
+        harness.player.dispatch('pause');
+
+        // The projection clock supplies the advancing target: the viewer is
+        // brought back to ~600 (and playing again), never to the frozen 0.
+        expect(harness.player.currentTime).toBeGreaterThan(599);
+        expect(harness.player.paused).toBe(false);
+    });
+
+    it('keeps a paused viewer paused at their real position when the room pauses', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+        harness.tick(600_000);
+        harness.player.currentTime = 600;
+
+        await harness.receivePausedState({ position: 600.5, revision: 2 });
+
+        expect(harness.player.paused).toBe(true);
+        // Small drift (0.5s) is tolerated: no snap-seek to the snapshot.
+        expect(harness.player.currentTime).toBe(600);
+    });
+
+    it('applies a genuine host seek exactly even when drift is under the threshold', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 10, revision: 1 });
+        harness.tick(200);
+        harness.player.currentTime = 10;
+
+        await harness.receiveSeekedState({ position: 12, revision: 2 });
+
+        expect(harness.player.currentTime).toBe(12);
+    });
+
+    it('re-seeks a lagging viewer once drift exceeds the threshold', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 100, revision: 1 });
+        harness.player.currentTime = 100;
+
+        // The viewer stalls (buffering) while the room advances 30s.
+        await harness.receivePausedState({ position: 130, revision: 2 });
+
+        expect(harness.player.currentTime).toBe(130);
+    });
+
+    it('does not thrash: playback within tolerance triggers no seek events', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 100, revision: 1 });
+        harness.player.currentTime = 100;
+
+        const seeksBefore = harness.sent.filter((entry) => entry.event === 'cinema:seek').length;
+        harness.player.dispatch('seeked'); // viewer scrub within tolerance
+
+        expect(harness.player.currentTime).toBe(100);
+        expect(
+            harness.sent.filter((entry) => entry.event === 'cinema:seek').length,
+        ).toBe(seeksBefore);
+    });
+});
+
 describe('playback controller: admission and volume wiring', (): void => {
     it('restores the stored volume and shows the element with controls on admission', (): void => {
         const harness = createPlayerHarness({ initialVolume: 0.4 });
