@@ -274,6 +274,159 @@ describe('playback controller: projection-driven reconciliation', (): void => {
     });
 });
 
+describe('playback controller: media error handling', (): void => {
+    it('coalesces element errors into one incident that tracks the latest code', (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        harness.player.failWithError(2); // network
+        harness.player.failWithError(2);
+        harness.player.failWithError(3); // decode
+
+        const issues = harness.store.getIssueSnapshot().issues.filter(
+            (issue) => issue.key === 'media-playback:film-a.mp4',
+        );
+        expect(issues).toHaveLength(1);
+        expect(issues[0]?.code).toBe(IssueCode.MediaDecode);
+        expect(issues[0]?.occurrences).toBe(3);
+        expect(issues[0]?.mediaErrorCode).toBe(3);
+        expect(issues[0]?.mediaId).toBe('film-a.mp4');
+        return Promise.resolve();
+    });
+
+    it('classifies an unusable source (code 4) as MediaUnusable', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        harness.player.failWithError(4);
+
+        expect(harness.activeIssueCodes()).toContain(IssueCode.MediaUnusable);
+    });
+
+    it('ignores a deliberate abort (code 1) entirely', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        harness.player.failWithError(1);
+
+        expect(harness.activeIssueCodes()).toEqual([]);
+    });
+
+    it('reports a failing source child as unusable with no mediaErrorCode', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        const source = harness.player.sourceChildren[0];
+        harness.player.dispatchChildError(source);
+
+        const issue = harness.issue(IssueCode.MediaUnusable);
+        expect(issue).toBeDefined();
+        expect(issue?.mediaErrorCode).toBeUndefined();
+    });
+
+    it('never treats abort/emptied (deliberate loads) as fatal', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        harness.player.dispatch('abort');
+        harness.player.dispatch('emptied');
+
+        expect(harness.activeIssueCodes()).toEqual([]);
+    });
+
+    it('never treats suspend/waiting/stalled (buffering) as fatal', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        harness.player.dispatch('suspend');
+        harness.player.dispatch('waiting');
+        harness.player.dispatch('stalled');
+
+        expect(harness.activeIssueCodes()).toEqual([]);
+    });
+
+    it('does not restart ended playback in a reconciliation loop', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+        const playCalls = harness.player.playCalls;
+
+        harness.player.markEnded();
+        const playCallsAfterEnded = harness.player.playCalls;
+
+        // Any later nudge (a fresh snapshot) still must not restart ended
+        // playback: the room is playing but the media is over.
+        await harness.receivePlayingState({ position: 0, revision: 2 });
+
+        expect(harness.activeIssueCodes()).toEqual([]);
+        expect(playCallsAfterEnded).toBe(playCalls);
+        expect(harness.player.playCalls).toBe(playCalls);
+    });
+
+    it('resumes when a later snapshot rewinds past the end', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        await harness.receivePlayingState({ position: 3_599, revision: 1 });
+        harness.player.markEnded();
+
+        // The host rewinds; the viewer must follow out of the ended state.
+        await harness.receiveSeekedState({ position: 10, revision: 2, playing: true });
+
+        expect(harness.player.ended).toBe(false);
+        expect(harness.player.currentTime).toBe(10);
+        expect(harness.player.paused).toBe(false);
+    });
+});
+
+describe('playback controller: media mismatch', (): void => {
+    it('pauses locally and reports MediaMismatch when the room watches other media', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        await harness.receivePlayingState({ position: 5, revision: 1 });
+        expect(harness.player.paused).toBe(false);
+
+        await harness.receivePlayingState({ mediaId: 'film-b.mp4', position: 5, revision: 2 });
+
+        expect(harness.player.paused).toBe(true);
+        expect(harness.activeIssueCodes()).toContain(IssueCode.MediaMismatch);
+        // Viewers never command; the host state (the server clock) is
+        // authoritative and untouched from here.
+        expect(harness.sent).toEqual([]);
+    });
+
+    it('keeps the room projection instead of resetting it, and recovers when the media matches again', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ mediaId: 'film-b.mp4', position: 40, revision: 1 });
+
+        // The room re-selects OUR media mid-stream: mismatch clears, the
+        // projected position applies, playback resumes.
+        await harness.receiveState({ mediaId: 'film-a.mp4', position: 42, revision: 2, playing: true });
+
+        expect(harness.activeIssueCodes()).not.toContain(IssueCode.MediaMismatch);
+        expect(harness.player.currentTime).toBe(42);
+        expect(harness.player.paused).toBe(false);
+    });
+
+    it('exposes reload as the mismatch recovery, wired to the injected page reload', (): void => {
+        const harness = createPlayerHarness();
+
+        const issue = harness.issue(IssueCode.MediaMismatch);
+        // The catalog advertises reload for the mismatch; the controller
+        // provides the action itself.
+        void issue;
+
+        harness.controller.reload();
+
+        expect(harness.reloads).toBe(1);
+    });
+});
+
 describe('playback controller: admission and volume wiring', (): void => {
     it('restores the stored volume and shows the element with controls on admission', (): void => {
         const harness = createPlayerHarness({ initialVolume: 0.4 });

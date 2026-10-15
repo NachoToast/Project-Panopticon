@@ -2,7 +2,7 @@ import { IssueStore } from '../diagnostics/issues';
 import { IssueCode } from '../diagnostics/snapshot';
 import type { SubtitleSettings } from '../config';
 import { createProjectionClock, ProjectionClock } from './clock';
-import { classifyPlayRejection } from './mediaErrors';
+import { classifyMediaErrorCode, classifyPlayRejection } from './mediaErrors';
 import {
     ClientEvents,
     isCommandRejection,
@@ -317,15 +317,14 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
             const pendingExact = deferredSeek?.exact === true || exact;
             deferredSeek = { load: loadGeneration, exact: pendingExact };
             return;
-        }
-        opToken += 1; // a seek invalidates in-flight play results
+        }        opToken += 1; // a seek invalidates in-flight play results
         programmatic.seeks += 1;
         element.currentTime = target;
     }
 
     /** Enforces the freshest projected snapshot on the element. */
     function reconcile(exact: boolean): void {
-        if (!connected) {
+        if (!connected || mismatchActive) {
             return;
         }
         const projected = projection.project();
@@ -398,6 +397,8 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
 
     // --- snapshot ingestion ------------------------------------------------------
 
+    let mismatchActive = false;
+
     function ingestSnapshot(kind: SnapshotKind, raw: unknown): void {
         if (!isPlaybackSnapshot(raw)) {
             report(IssueCode.InvalidServerState, raw);
@@ -406,6 +407,25 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
 
         if (!projection.apply(raw)) {
             return; // stale revision for this connection epoch
+        }
+
+        if (
+            media.mediaId !== null &&
+            raw.mediaId !== null &&
+            raw.mediaId !== media.mediaId
+        ) {
+            // The room watches different media: pause locally and surface
+            // the mismatch, but never command the room back — the server
+            // state stays authoritative and untouched.
+            mismatchActive = true;
+            pauseLocally();
+            report(IssueCode.MediaMismatch);
+            return;
+        }
+
+        if (mismatchActive) {
+            mismatchActive = false;
+            resolveIssues([IssueCode.MediaMismatch]);
         }
 
         reconcile(kind === 'seeked');
@@ -453,10 +473,45 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
     function onLoadedMetadata(): void {
         const pending = deferredSeek;
         deferredSeek = null;
-        if (pending === null || pending.load !== loadGeneration) {
+        if (pending?.load !== loadGeneration) {
             return;
         }
         reconcile(pending.exact);
+    }
+
+    /**
+     * One handler for element AND child-source error events (the listener is
+     * registered in the capture phase, where child-target errors are visible
+     * — they never bubble). Element errors carry element.error; a failing
+     * <source> child carries no code, so it stays unknown and reports the
+     * source as unusable. Deliberate aborts classify to null.
+     */
+    function onMediaError(event: { readonly target: unknown }): void {
+        if (event.target !== (element as unknown)) {
+            store.reportIssue({
+                code: classifyMediaErrorCode(undefined),
+                ...(media.mediaId !== null ? { mediaId: media.mediaId } : {}),
+            });
+            return;
+        }
+        const code = element.error?.code;
+        const classified = classifyMediaErrorCode(code);
+        if (classified === null) {
+            return;
+        }
+        store.reportIssue({
+            code: classified,
+            ...(media.mediaId !== null ? { mediaId: media.mediaId } : {}),
+            ...(code !== undefined ? { error: { code } } : {}),
+        });
+    }
+
+    /** Buffering signals are diagnostics only — never issues. */
+    function onBuffering(type: string): void {
+        store.recordDiagnostic({
+            type: `media-${type}`,
+            readings: { readyState: element.readyState },
+        });
     }
 
     function sendCommand(event: PlaybackCommandEvent): void {
@@ -476,16 +531,24 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         volume.persist(element.volume);
     }
 
-    const elementListeners: readonly (readonly [string, () => void])[] = [
+    const elementListeners: readonly (readonly [
+        string,
+        (event: PlaybackMediaEvent) => void,
+        boolean?,
+    ])[] = [
         ['play', onNativePlay],
         ['pause', onNativePause],
         ['seeked', onNativeSeeked],
         ['loadedmetadata', onLoadedMetadata],
         ['volumechange', onVolumeChange],
+        // Capture phase: child <source> errors never bubble to the element.
+        ['error', (event) => onMediaError(event), true],
+        ['waiting', (event) => onBuffering(event.type)],
+        ['stalled', (event) => onBuffering(event.type)],
     ];
 
-    for (const [type, listener] of elementListeners) {
-        element.addEventListener(type, listener);
+    for (const [type, listener, capture] of elementListeners) {
+        element.addEventListener(type, listener, capture === true ? { capture: true } : undefined);
     }
 
     // --- public surface -------------------------------------------------------------
@@ -575,8 +638,8 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
 
         dispose: (): void => {
             opToken += 1;
-            for (const [type, listener] of elementListeners) {
-                element.removeEventListener(type, listener);
+            for (const [type, listener, capture] of elementListeners) {
+                element.removeEventListener(type, listener, capture === true ? { capture: true } : undefined);
             }
         },
     };

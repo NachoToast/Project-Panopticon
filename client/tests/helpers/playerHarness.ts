@@ -141,6 +141,8 @@ export class FakeMediaElement {
                     return;
                 }
                 this.currentTimeInternal = value;
+                // Seeking clears the ended state, as in real elements.
+                this.ended = false;
                 this.dispatch('seeking');
                 this.dispatch('seeked');
             },
@@ -435,7 +437,8 @@ export function createPlayerHarness(options: PlayerHarnessOptions = {}): PlayerH
             await Promise.resolve();
         },
         receiveSeekedState: async (snapshot): Promise<void> => {
-            controller.handleSnapshot('seeked', baseSnapshot({ ...snapshot, playing: false }));
+            // Unlike pause, a seek keeps the room's playing state as-is.
+            controller.handleSnapshot('seeked', baseSnapshot(snapshot));
             await Promise.resolve();
         },
         receiveState: async (snapshot): Promise<void> => {
