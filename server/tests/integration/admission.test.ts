@@ -159,9 +159,12 @@ describe('connection admission', (): void => {
         await waiterAccepted;
 
         waiter.disconnect();
-        await new Promise((resolve): void => {
-            setTimeout(resolve, 100);
-        });
+        // Event-driven instead of a sleep: the Left broadcast to admins
+        // fires during the same server-side disconnect cleanup that
+        // releases the username, so once the host sees it the name is
+        // free to claim again.
+        const waiterLeft = nextEvent(host, ServerEvents.WaitingRoom.Left);
+        await waiterLeft;
 
         const reuse = connect(app.url, 'recycled');
         const reuseAccepted = nextEvent(reuse, ServerEvents.Connection.Accepted);
@@ -193,10 +196,13 @@ describe('approval', (): void => {
         await cinemaJoined;
 
         // Double click / stale second approve: no further admission.
+        // Events on one socket are handled in order, so instead of a
+        // fixed sleep, follow the duplicate with a state round-trip —
+        // once its result arrives, the duplicate has been fully handled.
+        const stateAfterDuplicate = nextEvent(host, ServerEvents.Cinema.State);
         host.emit('admin:approve', waitingUser);
-        await new Promise((resolve): void => {
-            setTimeout(resolve, 100);
-        });
+        host.emit('cinema:select', 'movie.mp4');
+        await stateAfterDuplicate;
 
         const seated = app.rooms.Cinema.getUserList();
         expect(seated.filter((entry) => entry.username === 'viewer')).toHaveLength(
