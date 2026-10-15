@@ -14,6 +14,12 @@ import { Room } from './Room.js';
 /** Performs the admin-broadcast that follows a successful playback command. */
 type PlaybackBroadcast = (admin: BaseUser, snapshot: PlaybackSnapshot) => void;
 
+/** The admin playback commands that carry a validated PlaybackCommand. */
+type PlaybackCommandEvent =
+    | ClientEvents.Cinema.Play
+    | ClientEvents.Cinema.Pause
+    | ClientEvents.Cinema.Seek;
+
 export class Cinema extends Room {
     /**
      * Server-authoritative playback state: the position keeps advancing for
@@ -39,7 +45,7 @@ export class Cinema extends Room {
         user.socket.emit(
             ServerEvents.Cinema.Users,
             this.getUserList(),
-            this.clock.snapshot(),
+            this.snapshot(),
         );
 
         if (user.isAdmin) {
@@ -49,6 +55,7 @@ export class Cinema extends Room {
             this.listenToSeek(user);
         }
     }
+
     protected override onLeave(user: User): void {
         user.socket.broadcast
             .to(this.roomName)
@@ -66,7 +73,7 @@ export class Cinema extends Room {
      */
     private listenToCommand(
         user: User,
-        event: ClientEvents.Cinema,
+        event: PlaybackCommandEvent,
         apply: (command: PlaybackCommand) => void,
         broadcast: PlaybackBroadcast,
     ): void {
@@ -74,27 +81,30 @@ export class Cinema extends Room {
         const admin = user.toBasic();
 
         socket.on(event, (payload: unknown) => {
+            if (!isPlaybackCommand(payload)) {
+                socket.emit(ServerEvents.Cinema.CommandRejected, 'invalid-command');
+                return;
+            }
+
+            if (payload.mediaId !== this.clock.currentMediaId()) {
+                socket.emit(ServerEvents.Cinema.CommandRejected, 'wrong-media');
+                return;
+            }
+
             try {
-                if (!isPlaybackCommand(payload)) {
-                    socket.emit(ServerEvents.Cinema.CommandRejected, 'invalid-command');
-                    return;
-                }
-
-                if (payload.mediaId !== this.clock.currentMediaId()) {
-                    socket.emit(ServerEvents.Cinema.CommandRejected, 'wrong-media');
-                    return;
-                }
-
                 apply(payload);
-
-                broadcast(admin, this.clock.snapshot());
             } catch {
                 // Socket.IO delivers whatever peers send; a hostile payload
                 // must never crash the server. The guards above should make
                 // this unreachable — this backstop converts the impossible
-                // into a rejection.
+                // into a rejection. It stops at apply: broadcast emits plain
+                // snapshots and cannot throw, so a rejection always means
+                // nothing was applied.
                 socket.emit(ServerEvents.Cinema.CommandRejected, 'invalid-command');
+                return;
             }
+
+            broadcast(admin, this.snapshot());
         });
     }
 
@@ -147,32 +157,36 @@ export class Cinema extends Room {
         const { socket } = user;
 
         socket.on(ClientEvents.Cinema.Select, (payload: unknown) => {
-            try {
-                const mediaId =
-                    typeof payload === 'string' ? normalizeMediaId(payload) : null;
+            const mediaId =
+                typeof payload === 'string' ? normalizeMediaId(payload) : null;
 
-                if (mediaId === null) {
-                    socket.emit(ServerEvents.Cinema.CommandRejected, 'invalid-command');
-                    return;
-                }
-
-                this.clock.selectMedia(mediaId);
-
-                // Broadcast to the whole cinema INCLUDING the host: a
-                // select is a media/state change, not an admin playback
-                // action, so everyone (host included) learns the
-                // authoritative snapshot and its revision together. This
-                // is Cinema.State rather than a reused Seeked so clients
-                // can distinguish "your media changed" from "the admin
-                // seeked" — Task 6 and the PR 2 UI rely on that.
-                const snapshot = this.clock.snapshot();
-                socket.emit(ServerEvents.Cinema.State, snapshot);
-                socket.broadcast
-                    .to(this.roomName)
-                    .emit(ServerEvents.Cinema.State, snapshot);
-            } catch {
+            if (mediaId === null) {
                 socket.emit(ServerEvents.Cinema.CommandRejected, 'invalid-command');
+                return;
             }
+
+            try {
+                this.clock.selectMedia(mediaId);
+            } catch {
+                // Same backstop as the playback commands, scoped to apply:
+                // the emits below carry plain snapshots and cannot throw, so
+                // a rejection always means nothing was selected.
+                socket.emit(ServerEvents.Cinema.CommandRejected, 'invalid-command');
+                return;
+            }
+
+            // Broadcast to the whole cinema INCLUDING the host: a
+            // select is a media/state change, not an admin playback
+            // action, so everyone (host included) learns the
+            // authoritative snapshot and its revision together. This
+            // is Cinema.State rather than a reused Seeked so clients
+            // can distinguish "your media changed" from "the admin
+            // seeked" — Task 6 and the PR 2 UI rely on that.
+            const snapshot = this.snapshot();
+            socket.emit(ServerEvents.Cinema.State, snapshot);
+            socket.broadcast
+                .to(this.roomName)
+                .emit(ServerEvents.Cinema.State, snapshot);
         });
     }
 }

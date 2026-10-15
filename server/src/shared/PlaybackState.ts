@@ -88,7 +88,7 @@ export function isMediaId(value: unknown): value is string {
     return !value.split('/').includes('..');
 }
 
-function isFinitePosition(value: unknown): value is number {
+function isPositionSeconds(value: unknown): value is number {
     return (
         typeof value === 'number' &&
         Number.isFinite(value) &&
@@ -98,7 +98,7 @@ function isFinitePosition(value: unknown): value is number {
 }
 
 function isSafeRevision(value: unknown): value is number {
-    return typeof value === 'number' && Number.isInteger(value) && value >= 0 && Number.isSafeInteger(value);
+    return typeof value === 'number' && value >= 0 && Number.isSafeInteger(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -117,7 +117,7 @@ export function isPlaybackSnapshot(value: unknown): value is PlaybackSnapshot {
     if (typeof playing !== 'boolean') {
         return false;
     }
-    if (!isFinitePosition(position) || !isSafeRevision(revision)) {
+    if (!isPositionSeconds(position) || !isSafeRevision(revision)) {
         return false;
     }
     return true;
@@ -129,7 +129,7 @@ export function isPlaybackCommand(value: unknown): value is PlaybackCommand {
         return false;
     }
     const { mediaId, position } = value;
-    return isMediaId(mediaId) && isFinitePosition(position);
+    return isMediaId(mediaId) && isPositionSeconds(position);
 }
 
 const COMMAND_REJECTIONS: readonly CommandRejection[] = [
@@ -148,11 +148,12 @@ export function isCommandRejection(value: unknown): value is CommandRejection {
  * Derives the media identity from the configured movie FILE PATH.
  *
  * Normalization (identical on client and server): trim, strip leading `./`
- * segments, collapse duplicate slashes, then reject the result unless it is
- * a valid mediaId — which also rejects any `..` segment and anything over
- * MAX_MEDIA_ID_LENGTH (the cap applies post-normalization, so a padded
- * `a//b` path that collapses under the cap stays usable). Returns null for
- * blank, non-string, hostile, or oversized input; never throws.
+ * segments and any leading slashes, collapse duplicate slashes, then reject
+ * the result unless it is a valid mediaId — which also rejects any `..`
+ * segment and anything over MAX_MEDIA_ID_LENGTH (the cap applies
+ * post-normalization, so a padded `a//b` path that collapses under the cap
+ * stays usable). Returns null for blank, non-string, hostile, or oversized
+ * input; never throws.
  */
 export function normalizeMediaId(configuredFile: string): string | null {
     if (typeof configuredFile !== 'string') {
@@ -163,6 +164,7 @@ export function normalizeMediaId(configuredFile: string): string | null {
     while (normalized.startsWith('./')) {
         normalized = normalized.slice(2);
     }
+    normalized = normalized.replace(/^\/+/, '');
     normalized = normalized.replace(/\/{2,}/g, '/');
 
     if (normalized === '') {

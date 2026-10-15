@@ -1,5 +1,5 @@
 import settings from '../settings.json';
-import { normalizeMediaId } from './shared/PlaybackState.js';
+import { normalizeMediaId } from './shared';
 
 /**
  * Application configuration: validated movie settings and socket discovery.

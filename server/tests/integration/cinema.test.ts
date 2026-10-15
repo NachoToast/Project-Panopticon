@@ -34,10 +34,10 @@ const clients = new Set<ClientSocket>();
 
 async function startHarness(): Promise<Harness> {
     const httpServer: HttpServer = createServer();
-    const io = new Server(httpServer, { cors: { origin: '*' } });
+    const ioServer = new Server(httpServer, { cors: { origin: '*' } });
     const cinema = new Cinema();
     let hostAssigned = false;
-    io.on('connection', (socket: ServerSocket): void => {
+    ioServer.on('connection', (socket: ServerSocket): void => {
         // Minimal connection wiring: the FIRST connector is the host (admin,
         // matching production role assignment) and everyone after is a plain
         // viewer; all join the cinema directly. The waiting-room/approval
@@ -70,7 +70,7 @@ async function startHarness(): Promise<Harness> {
             }
             clients.clear();
             await new Promise<void>((resolve): void => {
-                void io.close((): void => {
+                void ioServer.close((): void => {
                     resolve();
                 });
             });
@@ -101,13 +101,15 @@ async function connectClient(h: Harness): Promise<SeatedClient> {
 /** Resolves with the next payload(s) for `event`, failing on timeout. */
 function nextEvent(socket: ClientSocket, event: string, timeoutMs = 2_000): Promise<unknown[]> {
     return new Promise<unknown[]>((resolve, reject): void => {
-        const timer = setTimeout((): void => {
-            reject(new Error(`timed out waiting for "${event}"`));
-        }, timeoutMs);
-        socket.once(event, (...args: unknown[]): void => {
+        const onEvent = (...args: unknown[]): void => {
             clearTimeout(timer);
             resolve(args);
-        });
+        };
+        const timer = setTimeout((): void => {
+            socket.off(event, onEvent);
+            reject(new Error(`timed out waiting for "${event}"`));
+        }, timeoutMs);
+        socket.once(event, onEvent);
     });
 }
 

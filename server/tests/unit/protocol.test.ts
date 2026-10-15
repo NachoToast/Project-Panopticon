@@ -142,6 +142,11 @@ describe('normalizeMediaId', (): void => {
         expect(normalizeMediaId('././movie.mp4')).toBe('movie.mp4');
     });
 
+    it('strips leading slashes exposed after ./ stripping', (): void => {
+        expect(normalizeMediaId('.//movie.mp4')).toBe('movie.mp4');
+        expect(normalizeMediaId('//movie.mp4')).toBe('movie.mp4');
+    });
+
     it('collapses duplicate slashes', (): void => {
         expect(normalizeMediaId('a//b.mp4')).toBe('a/b.mp4');
         expect(normalizeMediaId('a///b////c.mp4')).toBe('a/b/c.mp4');
@@ -192,6 +197,7 @@ describe('client/server mirror invariant', (): void => {
     // the moment one side drifts, whichever side runs them.
     const THIS = 'server';
     const OTHER = 'client';
+    // OTHER_PATH assumes the fixed monorepo layout (sibling workspaces).
     const OTHER_PATH = '../../../client/src/shared';
 
     it.each([

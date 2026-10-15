@@ -57,9 +57,11 @@ function applySnapshot(snapshot: PlaybackSnapshot): void {
         return;
     }
 
-    const projected = projection.project();
-    lastSeenPlaying = projected === null ? snapshot.playing : projected.playing;
-    lastSeenTime = projected === null ? snapshot.position : projected.position;
+    // apply() returning true guarantees the clock holds this snapshot, so
+    // project() cannot return null; ?? only satisfies the compiler.
+    const projected = projection.project() ?? snapshot;
+    lastSeenPlaying = projected.playing;
+    lastSeenTime = projected.position;
 
     if (
         MOVIE_MEDIA_ID !== null &&
@@ -167,6 +169,9 @@ function setHidden(hidden: boolean): void {
 
 function emitCommand(event: ClientEvents.Cinema, position: number): void {
     if (MOVIE_MEDIA_ID === null) {
+        // Unusable settings mean no media identity to command with, so the
+        // local update is the whole effect; report why nothing syncs.
+        issueStore.reportIssue({ code: IssueCode.InvalidConfiguration });
         update();
         return;
     }
