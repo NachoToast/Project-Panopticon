@@ -6,7 +6,9 @@
         "dev": "bun --watch run src/main.ts",
         "start": "bun .",
         "typecheck": "bun run tsc",
-        "check-all": "bun run typecheck"
+        "check-all": "bun run typecheck",
+        "test": "bun test tests/unit",
+        "test:integration": "bun test tests/integration"
     },
     "devDependencies": {
         "@types/bun": "latest",
