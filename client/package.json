@@ -14,22 +14,26 @@
     },
     "scripts": {
         "build": "tsc && vite build",
-        "typecheck": "tsc",
-        "lint": "eslint src tests --max-warnings=0",
+        "typecheck": "tsc && tsc --project tsconfig.node.json",
+        "lint": "eslint src tests serve.mjs --max-warnings=0",
         "check-all": "pnpm run typecheck && pnpm run lint",
         "test": "vitest run",
         "test:browser": "playwright test --project=chromium",
-        "start": "vite preview --host --port=1730",
+        "start": "node serve.mjs",
         "dev": "vite --host --port=1730"
     },
     "devDependencies": {
         "@eslint/js": "^10.0.1",
         "@playwright/test": "1.63.0",
+        "@types/node": "^25.9.3",
         "eslint": "^10.4.1",
         "socket.io-client": "^4.7.5",
         "typescript": "^6.0.3",
         "typescript-eslint": "^8.61.0",
         "vite": "^8.0.16",
         "vitest": "4.1.6"
+    },
+    "dependencies": {
+        "serve-handler": "6.1.7"
     }
 }

@@ -110,6 +110,12 @@ cd server && pnpm start
 cd client && pnpm start
 ```
 
+`pnpm start` serves `client/dist/` through `serve.mjs` (a small Node static
+server with correct byte-range, 404, dotfile, symlink, and cache-header
+behavior — `vite preview` is not used in production because it mishandles
+range requests and falls back to `index.html` for missing files). It listens
+on port 1730; override with `PORT`/`HOST`.
+
 ### Converter
 
 ```sh
