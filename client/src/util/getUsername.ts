@@ -1,7 +1,7 @@
 import { EntryCard } from '../controllers';
 import { getElement } from './getElement';
 
-const usernameInput = getElement<HTMLInputElement>('#username-input');
+const usernameInput = getElement('#username-input', HTMLInputElement);
 
 const LOCAL_STORAGE_KEY = 'username';
 

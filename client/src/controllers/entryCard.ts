@@ -2,13 +2,13 @@ import { socket } from '../main';
 import { ServerEvents } from '../shared';
 import { getElement } from '../util';
 
-const cardElement = getElement<HTMLDivElement>('#entry-card');
+const cardElement = getElement('#entry-card', HTMLDivElement);
 
-const titleElement = getElement<HTMLHeadingElement>('#entry-card h1');
+const titleElement = getElement('#entry-card h1', HTMLHeadingElement);
 
-const descriptionElement = getElement<HTMLParagraphElement>('#entry-card p');
+const descriptionElement = getElement('#entry-card p', HTMLParagraphElement);
 
-const inputElement = getElement<HTMLInputElement>('#entry-card input');
+const inputElement = getElement('#entry-card input', HTMLInputElement);
 
 interface ShowProps {
     title: string;

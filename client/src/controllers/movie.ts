@@ -2,7 +2,7 @@ import { MOVIE_SOURCE, MOVIE_TYPE, socket, SUBTITLES } from '../main';
 import { ClientEvents, ServerEvents } from '../shared';
 import { getElement } from '../util';
 
-const element = getElement<HTMLVideoElement>('#movie');
+const element = getElement('#movie', HTMLVideoElement);
 
 const LOCAL_STORAGE_KEY = 'volume';
 const DEFAULT_VOLUME = 0.15; // 100% is always crazy loud
