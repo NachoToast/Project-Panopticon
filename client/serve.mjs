@@ -30,9 +30,11 @@ const HIDDEN_SEGMENT = /(?:^|\/)\./;
 //   every load.
 // - /assets/**: content-hashed filenames — safe to cache immutably for a
 //   year.
-// - /data/** (media): revalidate on use. serve-handler's strong-ETag option
-//   hashes the ENTIRE file (unacceptable for multi-GB movies), so ETags stay
-//   off and revalidation uses Last-Modified — weak semantics, by design.
+// - /data/** (media): serve-handler's strong-ETag option hashes the ENTIRE
+//   file (unacceptable for multi-GB movies), so ETags stay off. Last-Modified
+//   is sent for future/manual revalidation only: the handler never reads
+//   If-Modified-Since, so conditional 304s are a known gap (deferred) —
+//   /data media re-downloads in full on reuse today.
 const CACHE_RULES = [
     { source: '/**', headers: [{ key: 'Cache-Control', value: 'no-cache, must-revalidate' }] },
     {
@@ -52,10 +54,10 @@ const CACHE_RULES = [
 function handlerConfig(root) {
     return {
         public: root,
-        cleanUrls: true, // `/` resolves to index.html; `/index.html` 301s to `/`
+        cleanUrls: true, // `/` resolves to index.html; `/index.html` 301s to `/index`, then `/`
         directoryListing: false, // `/data/` must never enumerate files
         symlinks: false, // a symlink inside dist/ is a 404, not an escape hatch
-        etag: false, // strong ETags hash whole files; Last-Modified instead
+        etag: false, // strong ETags hash whole files (see the /data note above)
         headers: CACHE_RULES,
     };
 }
@@ -82,6 +84,10 @@ async function handleRequest(request, response, root) {
         return;
     }
 
+    // Byte-range handling (206/416) is delegated to serve-handler, which
+    // truncates a multi-range request (Range: bytes=0-1,5-9) to the FIRST
+    // range only — probe-verified. Browsers never send multi-range for
+    // media playback, so this is a documented gap, not a defect to fix.
     await serveHandler(request, response, handlerConfig(root));
 }
 
@@ -137,7 +143,13 @@ export async function createStaticServer(options) {
     // argument (TS2810 requires the JSDoc hint in checked JavaScript).
     await /** @type {Promise<void>} */ (
         new Promise((resolveListen, rejectListen) => {
-            server.once('error', (error) => {
+            /**
+             * Pre-listen failure reporter (EADDRINUSE gets the friendly hint).
+             *
+             * @param {Error} error
+             * @returns {void}
+             */
+            const onListenError = (error) => {
                 const errno = /** @type {NodeJS.ErrnoException} */ (error);
                 if (errno.code === 'EADDRINUSE') {
                     rejectListen(
@@ -148,8 +160,15 @@ export async function createStaticServer(options) {
                     return;
                 }
                 rejectListen(error);
-            });
+            };
+            server.once('error', onListenError);
             server.listen(port, host, () => {
+                // Detach on success: were this listener to survive a
+                // successful listen, a post-listen server error would be
+                // consumed here and silently dropped (rejectListen after
+                // resolve is a no-op). With no listener attached, 'error'
+                // throws loudly instead of killing the server quietly.
+                server.removeListener('error', onListenError);
                 resolveListen();
             });
         })
@@ -200,8 +219,17 @@ async function main() {
         `client production server listening on http://${server.host}:${String(server.port)} (serving ${DEFAULT_ROOT})`,
     );
 
+    let shuttingDown = false;
     /** @returns {void} */
     const shutdown = () => {
+        // A client cycling keep-alive connections can hold close() open
+        // indefinitely; waiting it out is acceptable for a LAN app. A
+        // SECOND signal means the operator stopped waiting — force-exit
+        // instead of re-entering the already-running shutdown path.
+        if (shuttingDown) {
+            process.exit(1);
+        }
+        shuttingDown = true;
         server
             .close()
             .then(() => {

@@ -38,6 +38,7 @@ const REPO_LOCKFILE_PATH = join(CLIENT_DIR, '..', 'pnpm-lock.yaml');
 const INDEX_MARKER = 'panopticon-media-serving-contract';
 const ENV_SECRET = 'PANOPTICON_HTTP_CONTRACT_SECRET';
 const ASSET_NAME = 'app-DHw3fK9z.js';
+const NESTED_ASSET_NAME = 'poster-DHw3fK9z.png';
 
 const READY_TIMEOUT_MS = 30_000;
 const EXIT_TIMEOUT_MS = 10_000;
@@ -87,17 +88,30 @@ async function waitForOrigin(origin: string, deadlineMs: number): Promise<void> 
 
 function killTree(child: ChildProcess): Promise<void> {
     return new Promise<void>((resolve: () => void): void => {
+        let settled = false;
+        /** Idempotent: whichever of exit/already-dead/timeout fires first wins. */
+        const settle = (): void => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            clearTimeout(timer);
+            resolve();
+        };
+        // Last resort: force-kill AND settle — a child that died before this
+        // point never emits 'exit' again, so the timer must resolve too or
+        // afterAll hangs forever. (settle may only run after this line, so
+        // the late `const timer` it closes over is safe.)
         const timer = setTimeout((): void => {
             child.kill('SIGKILL');
+            settle();
         }, EXIT_TIMEOUT_MS);
-        child.once('exit', (): void => {
-            clearTimeout(timer);
-            resolve();
-        });
+        child.once('exit', settle);
         child.kill('SIGTERM');
-        if (child.exitCode !== null) {
-            clearTimeout(timer);
-            resolve();
+        // Already-exited children never re-emit 'exit'. exitCode is null when
+        // death was by signal, so signalCode must be checked as well.
+        if (child.exitCode !== null || child.signalCode !== null) {
+            settle();
         }
     });
 }
@@ -203,6 +217,11 @@ describe(
                 `<!doctype html><html><head><title>${INDEX_MARKER}</title></head><body><p>fixture index</p></body></html>`,
             );
             writeFileSync(join(distRoot, 'assets', ASSET_NAME), `console.log('${INDEX_MARKER}');\n`);
+            // Nested hashed asset (assets/<dir>/<file>): real builds put
+            // posters/fonts in subdirectories, so the immutable rule must
+            // reach nested paths, not just flat ones.
+            mkdirSync(join(distRoot, 'assets', 'media'), { recursive: true });
+            writeFileSync(join(distRoot, 'assets', 'media', NESTED_ASSET_NAME), 'nested fixture asset\n');
             writeFileSync(join(distRoot, '.env'), `${ENV_SECRET}=1\n`);
             writeFileSync(join(distRoot, '.git', 'HEAD'), 'ref: refs/heads/main\n');
             copyFileSync(FIXTURE_MEDIA_PATH, join(distRoot, 'data', 'red.mp4'));
@@ -240,6 +259,13 @@ describe(
             expect(response.status).toBe(200);
             expect(response.headers.get('content-type')).toContain('text/html');
             expect(await response.text()).toContain(INDEX_MARKER);
+
+            // cleanUrls 301s the raw filename away — probe-verified chain is
+            // TWO hops (/index.html -> /index -> /) before the document;
+            // only the first hop is pinned here.
+            const raw = await get('/index.html');
+            expect(raw.status).toBe(301);
+            expect(raw.headers.get('location')).toBe('/index');
         });
 
         it('answers bytes=0-0 with exactly the first byte', async (): Promise<void> => {
@@ -353,11 +379,25 @@ describe(
             expect(asset.headers.get('cache-control')).toContain('max-age=31536000');
             expect(asset.headers.get('cache-control')).toContain('immutable');
 
-            // Media revalidates (no whole-movie strong ETags by design);
-            // Last-Modified must be present for that.
+            // The immutable rule reaches NESTED hashed assets
+            // (assets/<dir>/<file>) too, not just flat ones.
+            const nestedAsset = await get(`/assets/media/${NESTED_ASSET_NAME}`);
+            expect(nestedAsset.status).toBe(200);
+            expect(nestedAsset.headers.get('cache-control')).toContain('immutable');
+
+            // Media revalidates on reuse (no whole-movie strong ETags by
+            // design). Last-Modified is present for future/manual
+            // revalidation — the handler ignores If-Modified-Since, so
+            // conditional 304s remain a deferred gap (see serve.mjs).
             const media = await get('/data/red.mp4');
             expect(media.headers.get('cache-control')).toContain('must-revalidate');
             expect(media.headers.get('last-modified')).toBeTruthy();
+
+            // Query strings (players append ?t=1 style offsets) still match
+            // the media cache rule and serve the file.
+            const seek = await get('/data/red.mp4?t=1');
+            expect(seek.status).toBe(200);
+            expect(seek.headers.get('cache-control')).toContain('must-revalidate');
         });
     },
 );
