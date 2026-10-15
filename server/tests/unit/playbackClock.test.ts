@@ -7,7 +7,7 @@ import { PlaybackClock } from '../../src/playback/PlaybackClock.js';
 
 describe('PlaybackClock', (): void => {
     it('starts paused at zero with no media and revision 0', (): void => {
-        let now = 0;
+    const now = 0;
         const clock = new PlaybackClock(() => now);
 
         expect(clock.snapshot()).toEqual({
@@ -19,7 +19,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('reports the advancing position to a late joiner', (): void => {
-        let now = 0;
+    let now = 0;
         const clock = new PlaybackClock(() => now);
         clock.selectMedia('film-a.mp4');
         clock.play({ mediaId: 'film-a.mp4', position: 0 });
@@ -38,7 +38,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('does not advance while paused', (): void => {
-        let now = 0;
+    let now = 0;
         const clock = new PlaybackClock(() => now);
         clock.selectMedia('film.mp4');
         clock.pause({ mediaId: 'film.mp4', position: 33 });
@@ -50,7 +50,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('freezes at the paused position regardless of elapsed time', (): void => {
-        let now = 0;
+    let now = 0;
         const clock = new PlaybackClock(() => now);
         clock.selectMedia('film.mp4');
         clock.play({ mediaId: 'film.mp4', position: 0 });
@@ -63,7 +63,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('continues from the new base after a seek while playing', (): void => {
-        let now = 0;
+    let now = 0;
         const clock = new PlaybackClock(() => now);
         clock.selectMedia('film.mp4');
         clock.play({ mediaId: 'film.mp4', position: 0 });
@@ -76,7 +76,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('stays at the new base after a seek while paused', (): void => {
-        let now = 0;
+    let now = 0;
         const clock = new PlaybackClock(() => now);
         clock.selectMedia('film.mp4');
         clock.seek({ mediaId: 'film.mp4', position: 42 });
@@ -98,7 +98,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('preserves state and revision when the same media is re-selected', (): void => {
-        let now = 0;
+    let now = 0;
         const clock = new PlaybackClock(() => now);
         clock.selectMedia('film.mp4');
         clock.play({ mediaId: 'film.mp4', position: 100 });
@@ -115,7 +115,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('resets to paused at zero with a bumped revision on a different media', (): void => {
-        let now = 0;
+    let now = 0;
         const clock = new PlaybackClock(() => now);
         clock.selectMedia('film-a.mp4');
         clock.play({ mediaId: 'film-a.mp4', position: 500 });
@@ -132,7 +132,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('bumps the revision on every state change and never resets it', (): void => {
-        let now = 0;
+    const now = 0;
         const clock = new PlaybackClock(() => now);
         expect(clock.snapshot().revision).toBe(0);
 
@@ -165,7 +165,7 @@ describe('PlaybackClock', (): void => {
     });
 
     it('treats an explicit seek 10 to 12 as exact, distinct from drift', (): void => {
-        let now = 0;
+    const now = 0;
         const clock = new PlaybackClock(() => now);
         clock.selectMedia('film.mp4');
         clock.seek({ mediaId: 'film.mp4', position: 10 });

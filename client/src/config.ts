@@ -1,4 +1,5 @@
 import settings from '../settings.json';
+import { normalizeMediaId } from './shared/PlaybackState.js';
 
 /**
  * Application configuration: validated movie settings and socket discovery.
@@ -134,6 +135,16 @@ export const MOVIE_SOURCE: string = movieSettings === null ? '' : `data/${movieS
 export const MOVIE_TYPE: string = movieSettings === null ? '' : movieSettings.type;
 
 export const SUBTITLES: readonly SubtitleSettings[] = movieSettings === null ? [] : movieSettings.subtitles;
+
+/**
+ * The normalized identity of the configured movie FILE (never the URL or
+ * origin — the host may browse via localhost while viewers use a LAN IP).
+ * Derived with the same `normalizeMediaId` the server applies to
+ * Cinema.Select, so both sides agree on the identity; null when settings
+ * are unusable or the file path cannot be normalized.
+ */
+export const MOVIE_MEDIA_ID: string | null =
+    movieSettings === null ? null : normalizeMediaId(movieSettings.file);
 
 /** The port the room server always listens on. */
 const SERVER_PORT = 5000;

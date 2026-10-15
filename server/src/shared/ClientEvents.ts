@@ -28,5 +28,5 @@ export interface All {
 
     [Admin.Kick]: (target: BaseUser, reason?: string) => void;
     [Admin.Ban]: (target: BaseUser, reason?: string) => void;
-    [Admin.Approved]: (target: BaseUser) => void;
+    [Admin.Approve]: (target: BaseUser) => void;
 }

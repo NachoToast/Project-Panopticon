@@ -191,7 +191,8 @@ describe('client/server mirror invariant', (): void => {
     // The shared/ copies are synced MANUALLY; these byte-for-byte checks fail
     // the moment one side drifts, whichever side runs them.
     const THIS = 'client';
-    const OTHER = '../../../server/src/shared';
+    const OTHER = 'server';
+    const OTHER_PATH = '../../../server/src/shared';
 
     it.each([
         ['PlaybackState.ts'],
@@ -200,7 +201,7 @@ describe('client/server mirror invariant', (): void => {
         ['index.ts'],
     ])('keeps %s byte-identical in both workspaces', (file: string): void => {
         const ours = readFileSync(new URL(`../../src/shared/${file}`, import.meta.url), 'utf8');
-        const theirs = readFileSync(new URL(`${OTHER}/${file}`, import.meta.url), 'utf8');
-        expect(ours, `${THIS} copy of ${file} must equal the ${OTHER.split('/')[2]} copy`).toBe(theirs);
+        const theirs = readFileSync(new URL(`${OTHER_PATH}/${file}`, import.meta.url), 'utf8');
+        expect(ours, `${THIS} copy of ${file} must equal the ${OTHER} copy`).toBe(theirs);
     });
 });

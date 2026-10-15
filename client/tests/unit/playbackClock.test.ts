@@ -13,8 +13,7 @@ function snapshot(revision: number, position: number, playing: boolean): Playbac
 
 describe('createProjectionClock', (): void => {
     it('projects nothing before any snapshot arrives', (): void => {
-        let now = 0;
-        const clock = createProjectionClock((): number => now);
+        const clock = createProjectionClock((): number => 0);
 
         expect(clock.project()).toBeNull();
     });
