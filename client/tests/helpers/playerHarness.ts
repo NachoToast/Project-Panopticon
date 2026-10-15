@@ -7,7 +7,7 @@ import {
     PlaybackSourceChild,
     PlaybackTrackChild,
 } from '../../src/playback/controller';
-import { PlaybackSnapshot } from '../../src/shared';
+import { normalizeMediaId, PlaybackSnapshot } from '../../src/shared';
 
 /**
  * Node test vehicle for the playback controller (Task 6).
@@ -367,7 +367,9 @@ export function createPlayerHarness(options: PlayerHarnessOptions = {}): PlayerH
         media: {
             source: `data/${file}`,
             type: 'video/mp4',
-            mediaId: file,
+            // Same derivation config.ts applies: unusable files have no
+            // media identity at all.
+            mediaId: normalizeMediaId(file),
             subtitles: options.subtitles ?? [],
         },
         createElement: {

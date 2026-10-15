@@ -427,6 +427,185 @@ describe('playback controller: media mismatch', (): void => {
     });
 });
 
+describe('playback controller: disconnect lifecycle', (): void => {
+    it('pauses, hides, and strips controls the moment the transport drops', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+        expect(harness.player.paused).toBe(false);
+
+        harness.disconnect('transport close');
+
+        expect(harness.player.paused).toBe(true); // no hidden audio
+        expect(harness.player.hidden).toBe(true);
+        expect(harness.player.controls).toBe(false);
+        expect(harness.activeIssueCodes()).toContain(IssueCode.ConnectionLost);
+    });
+
+    it('reports ConnectionLost only for transport-level disconnects', (): void => {
+        const harness = createPlayerHarness();
+
+        harness.disconnect('io server disconnect'); // kick/ban flow
+        expect(harness.activeIssueCodes()).not.toContain(IssueCode.ConnectionLost);
+
+        harness.disconnect('io client disconnect'); // deliberate close
+        expect(harness.activeIssueCodes()).not.toContain(IssueCode.ConnectionLost);
+
+        harness.disconnect('ping timeout');
+        expect(harness.activeIssueCodes()).toContain(IssueCode.ConnectionLost);
+    });
+
+    it('invalidates in-flight work: a late play rejection after disconnect stays silent', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.player.deferPlay = true;
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+
+        harness.disconnect('transport close');
+        harness.player.settleNextPlay(playRejection('NotAllowedError'));
+        await harness.settle();
+
+        expect(harness.activeIssueCodes()).toEqual([IssueCode.ConnectionLost]);
+        expect(harness.player.paused).toBe(true);
+    });
+
+    it('readmission restores visibility and controls without reloading the media', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(false);
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        harness.player.markDataLoaded();
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+
+        harness.disconnect('transport close');
+        expect(harness.player.hidden).toBe(true);
+
+        harness.reconnect();
+        harness.receiveAccepted(false);
+        harness.receiveAdmission();
+
+        expect(harness.player.hidden).toBe(false);
+        expect(harness.player.controls).toBe(true);
+        expect(harness.player.loadCalls).toBe(1); // same usable media reused
+    });
+
+    it('drops the stale revision baseline across a server restart epoch', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        await harness.receivePlayingState({ position: 10, revision: 7, playing: false });
+
+        harness.disconnect('transport close');
+        harness.reconnect();
+        harness.receiveAccepted(false);
+        harness.receiveAdmission();
+
+        // A restarted server counts revisions from 0 again; the new epoch
+        // must accept them instead of dropping them as stale.
+        await harness.receivePausedState({ position: 0, revision: 1 });
+
+        expect(harness.player.currentTime).toBe(0);
+    });
+});
+
+describe('playback controller: trusted command emission', (): void => {
+    function adminHarness(): ReturnType<typeof createPlayerHarness> {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(true);
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        return harness;
+    }
+
+    it('never commands as a viewer, however the element moves', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(false);
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+        harness.player.currentTime = 5;
+        harness.player.dispatch('pause');
+
+        expect(harness.sent.filter((entry) => entry.kind === 'command')).toHaveLength(0);
+    });
+
+    it('suppresses the programmatic play its own reconciliation started (no echo loop)', async (): Promise<void> => {
+        const harness = adminHarness();
+
+        // A same-media State broadcast says playing while the host element
+        // is paused; reconciliation plays it — that play must NOT become a
+        // cinema:play command, or the host would command its own echo.
+        await harness.receiveState({ position: 0, revision: 2, playing: true });
+
+        expect(harness.player.paused).toBe(false);
+        expect(harness.sent.filter((entry) => entry.event === 'cinema:play')).toHaveLength(0);
+    });
+
+    it('suppresses the programmatic pause from a room pause broadcast', async (): Promise<void> => {
+        const harness = adminHarness();
+        await harness.receivePlayingState({ position: 0, revision: 2 });
+
+        await harness.receivePausedState({ position: 3, revision: 3 });
+
+        expect(harness.player.paused).toBe(true);
+        expect(harness.sent.filter((entry) => entry.event === 'cinema:pause')).toHaveLength(0);
+    });
+
+    it('emits exactly one command per genuine native control event', (): void => {
+        const harness = adminHarness();
+
+        harness.player.paused = false;
+        harness.player.dispatch('play');
+        harness.player.dispatch('pause');
+        harness.player.currentTime = 12; // genuine scrub fires a real seeked
+
+        const commands = harness.sent.filter((entry) => entry.kind === 'command');
+        expect(commands.map((entry) => entry.event)).toEqual([
+            'cinema:play',
+            'cinema:pause',
+            'cinema:seek',
+        ]);
+        expect(commands[2]?.payload).toEqual({ mediaId: 'film-a.mp4', position: 12 });
+    });
+
+    it('emits no host commands while disconnected', (): void => {
+        const harness = adminHarness();
+
+        harness.disconnect('transport close');
+        harness.player.dispatch('play');
+
+        expect(harness.sent.filter((entry) => entry.kind === 'command')).toHaveLength(0);
+    });
+
+    it('reclaims the play marker when play() is refused, so genuine input still commands', async (): Promise<void> => {
+        const harness = adminHarness();
+        harness.player.playRejections.push(playRejection('NotAllowedError'));
+
+        await harness.receiveState({ position: 0, revision: 2, playing: true });
+
+        // The refused attempt must not leave a suppression marker behind.
+        harness.player.paused = false;
+        harness.player.dispatch('play');
+
+        const plays = harness.sent.filter((entry) => entry.event === 'cinema:play');
+        expect(plays).toHaveLength(1);
+    });
+
+    it('refuses to command without a media identity and reports why', (): void => {
+        const harness = createPlayerHarness({ file: 'bad name.mp4' });
+        // An unnormalizable file leaves the media identity null.
+        harness.receiveAccepted(true);
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        harness.player.dispatch('pause');
+
+        expect(harness.sent.filter((entry) => entry.kind === 'command')).toHaveLength(0);
+        expect(harness.activeIssueCodes()).toContain(IssueCode.InvalidConfiguration);
+    });
+});
+
 describe('playback controller: admission and volume wiring', (): void => {
     it('restores the stored volume and shows the element with controls on admission', (): void => {
         const harness = createPlayerHarness({ initialVolume: 0.4 });

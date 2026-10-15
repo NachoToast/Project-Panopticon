@@ -267,6 +267,10 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
             },
             (failure: unknown): void => {
                 playInFlight = false;
+                // A refused play never fires a native play event, so the
+                // suppression marker it reserved must be handed back —
+                // otherwise the NEXT genuine play would be swallowed.
+                programmatic.plays = Math.max(0, programmatic.plays - 1);
                 if (token !== opToken) {
                     // A newer operation already decided differently.
                     return;
@@ -488,10 +492,14 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
      */
     function onMediaError(event: { readonly target: unknown }): void {
         if (event.target !== (element as unknown)) {
-            store.reportIssue({
-                code: classifyMediaErrorCode(undefined),
-                ...(media.mediaId !== null ? { mediaId: media.mediaId } : {}),
-            });
+            // A <source> child failed: no code available (stays unknown).
+            const unusable = classifyMediaErrorCode(undefined);
+            if (unusable !== null) {
+                store.reportIssue({
+                    code: unusable,
+                    ...(media.mediaId !== null ? { mediaId: media.mediaId } : {}),
+                });
+            }
             return;
         }
         const code = element.error?.code;
@@ -542,9 +550,15 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         ['loadedmetadata', onLoadedMetadata],
         ['volumechange', onVolumeChange],
         // Capture phase: child <source> errors never bubble to the element.
-        ['error', (event) => onMediaError(event), true],
-        ['waiting', (event) => onBuffering(event.type)],
-        ['stalled', (event) => onBuffering(event.type)],
+        ['error', (event): void => {
+            onMediaError(event);
+        }, true],
+        ['waiting', (event): void => {
+            onBuffering(event.type);
+        }],
+        ['stalled', (event): void => {
+            onBuffering(event.type);
+        }],
     ];
 
     for (const [type, listener, capture] of elementListeners) {
