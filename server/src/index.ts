@@ -6,6 +6,9 @@ import { createApplication } from './app.js';
  * src/app.ts; importing domain modules never starts a server.
  */
 
+/** Grace period before a stuck connection may wedge shutdown forever. */
+const SHUTDOWN_FORCE_EXIT_MS = 5_000;
+
 const PORT = process.env['PORT'] ?? 5_000;
 
 const app = createApplication();
@@ -15,9 +18,26 @@ app.httpServer.listen(PORT, () => {
 });
 
 function shutdown(): void {
-    void app.close().finally(() => {
-        process.exit(0);
-    });
+    // A connection that refuses to drain must not hang the process:
+    // force a non-zero exit after the grace period elapses.
+    const forceExit = setTimeout((): void => {
+        app.logger.error(
+            `graceful shutdown exceeded ${SHUTDOWN_FORCE_EXIT_MS.toString()}ms; forcing exit`,
+        );
+        process.exit(1);
+    }, SHUTDOWN_FORCE_EXIT_MS);
+
+    app.close().then(
+        (): void => {
+            clearTimeout(forceExit);
+            process.exit(0);
+        },
+        (error: unknown): void => {
+            clearTimeout(forceExit);
+            app.logger.error('graceful shutdown failed', error);
+            process.exit(1);
+        },
+    );
 }
 
 process.on('SIGINT', shutdown);

@@ -2,8 +2,7 @@ import { createServer, type Server as HttpServer } from 'node:http';
 import { Server as SocketServer } from 'socket.io';
 import { createLogger, type Logger } from './logging.js';
 import { createRooms, type RoomsRegistry } from './rooms.js';
-import { ClientEvents } from './shared/index.js';
-import type { ServerEvents } from './shared/index.js';
+import type { ClientEvents, ServerEvents } from './shared/index.js';
 import type { ServerSocket } from './types.js';
 import { AdmissionState, validateConnection } from './validation.js';
 
@@ -116,9 +115,24 @@ export function createApplication(
         logger,
         handleConnection,
         close: async (): Promise<void> => {
-            await io.close();
-            await new Promise<void>((resolve) => {
-                void httpServer.close((): void => {
+            // io.close() already closes the http server it was built
+            // with (socket.io 4.8 calls this.httpServer.close internally),
+            // so closing httpServer again here would double-close it.
+            // Idle keep-alive connections would otherwise stall the
+            // close; drop them first when the runtime supports it.
+            if (typeof httpServer.closeIdleConnections === 'function') {
+                httpServer.closeIdleConnections();
+            }
+
+            await new Promise<void>((resolve, reject): void => {
+                // io.close's own promise never rejects (errors are
+                // funneled to this callback instead); it is still
+                // floating, so mark it explicitly ignored.
+                void io.close((error?: Error): void => {
+                    if (error !== undefined) {
+                        reject(error);
+                        return;
+                    }
                     resolve();
                 });
             });

@@ -69,6 +69,13 @@ export class Admins extends Room {
             const targetUser = this.getUserFromOtherRooms(target);
             if (targetUser === null) return;
 
+            // PRESERVED POLICY QUIRK (mirrors the note in
+            // admission.test.ts): getIdenticalUsers scans THIS room
+            // (Admins) only, so the disconnect loop hits identical-ip
+            // admins — on loopback that disconnects the host, not the
+            // waiting-room target. The ip ban itself still lands. This
+            // is deliberate pending a policy review; do not "fix"
+            // silently.
             for (const identical of this.getIdenticalUsers(targetUser.ip)) {
                 identical.socket.emit(ServerEvents.Connection.Rejected, reason);
                 identical.socket.disconnect();

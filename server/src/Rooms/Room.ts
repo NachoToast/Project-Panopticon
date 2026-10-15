@@ -156,18 +156,22 @@ export abstract class Room {
      * registered on the member's socket.
      *
      * Why per-room bookkeeping instead of `socket.removeAllListeners()`
-     * (investigated against socket.io 4.7): a server Socket extends Node's
-     * EventEmitter, and the framework only EMITS reserved events
-     * ('disconnecting'/'disconnect') on it — it never self-subscribes there
-     * (engine-level listeners live on the Client's `conn` and are managed by
-     * `Client.destroy()`). So removeAllListeners() does not corrupt
-     * socket.io internals; what it destroys is every ROOM's handlers on that
-     * socket at once. A user seated in several rooms (the host sits in both
-     * Admins and Cinema) would lose their other rooms' event handlers and
-     * disconnect cleanup — leaking ghost members — and approving an
-     * already-admitted user stripped their active handlers mid-session.
-     * Recording and removing only what add()/onJoin() registered keeps every
-     * room's cleanup independent.
+     * (checked against socket.io 4.8): a server Socket extends
+     * StrictEventEmitter — socket.io's typed emitter layered over
+     * component-emitter's strict signatures, NOT a plain Node
+     * EventEmitter — and the framework DOES self-subscribe on it: the
+     * Socket constructor installs `this.on("error", noop)`, which a
+     * blanket removal would strip along with everything else. The
+     * reserved 'disconnecting'/'disconnect' events are only EMITTED on
+     * the socket (engine-level listeners live on the Client's `conn`
+     * and are managed by `Client.destroy()`), but that does not make
+     * removeAllListeners() safe: what it destroys is every ROOM's
+     * handlers on that socket at once. A user seated in several rooms
+     * (the host sits in both Admins and Cinema) would lose their other
+     * rooms' event handlers and disconnect cleanup — leaking ghost
+     * members — and approving an already-admitted user stripped their
+     * active handlers mid-session. Recording and removing only what
+     * add()/onJoin() registered keeps every room's cleanup independent.
      */
     private unseat(user: User): void {
         // A disconnect may have already removed the member while their
