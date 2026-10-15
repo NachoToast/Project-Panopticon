@@ -217,9 +217,9 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
     };
 
     /**
-     * Single mutation counter: play/pause enforcement and (later) loads and
-     * disconnects bump it; async continuations capture it first and discard
-     * themselves when it has moved on.
+     * Single mutation counter: every enforcement mutation (play/pause/seek),
+     * media load, and disconnect bumps it; async continuations capture it
+     * first and discard themselves when it has moved on.
      */
     let opToken = 0;
 
