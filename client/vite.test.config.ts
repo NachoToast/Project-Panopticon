@@ -21,7 +21,10 @@ export default defineConfig({
         ],
     },
     server: {
-        port: 1730,
+        // 1732 (not the dev server's 1730) so a running dev server can
+        // never be silently reused for tests (fixture alias vs. real
+        // settings); matches playwright.config.ts.
+        port: 1732,
         strictPort: true,
     },
 });

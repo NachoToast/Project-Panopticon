@@ -1,5 +1,5 @@
 import { createIssueStore, IssueStore } from '../../src/diagnostics/issues';
-import { Issue, IssueCode } from '../../src/diagnostics/snapshot';
+import { Issue, IssueCode, IssueInput } from '../../src/diagnostics/snapshot';
 import {
     createPlaybackController,
     PlaybackController,
@@ -18,7 +18,10 @@ import { normalizeMediaId, PlaybackSnapshot } from '../../src/shared';
  * behaviors of an HTMLMediaElement the controller relies on:
  *
  * - play()/pause() flip `paused` and fire the matching native event on
- *   success (a rejected play leaves `paused` untouched and fires nothing);
+ *   success — but only on a real transition, as in real elements: play()
+ *   on an already-unpaused element and pause() on an already-paused one
+ *   are silent no-ops (a rejected play leaves `paused` untouched and
+ *   fires nothing);
  * - a currentTime write fires `seeking` + `seeked` synchronously (browsers
  *   fire `seeked` asynchronously; nothing in the controller depends on the
  *   delay — the programmatic-seek marker stays pending until it fires);
@@ -165,6 +168,11 @@ export class FakeMediaElement {
 
     public play(): Promise<void> {
         this.playCalls += 1;
+        if (!this.paused) {
+            // Real elements fire `play` only on the paused→playing
+            // transition; play() on an unpaused element fires nothing.
+            return Promise.resolve();
+        }
         const rejection = this.playRejections.shift();
         if (rejection !== undefined) {
             // The harness plays the browser here; callers seed Errors
@@ -327,6 +335,8 @@ export interface PlayerHarness {
     receivePausedState(snapshot: Partial<PlaybackSnapshot> & { position: number; revision: number }): Promise<void>;
     receiveSeekedState(snapshot: Partial<PlaybackSnapshot> & { position: number; revision: number }): Promise<void>;
     receiveState(snapshot: Partial<PlaybackSnapshot> & { position: number; revision: number }): Promise<void>;
+    /** Cinema.CommandRejected delivery (what movie.ts forwards). */
+    receiveCommandRejected(rejection: unknown): void;
     /** Simulates the socket transport going away. */
     disconnect(reason?: string): void;
     /** Simulates the socket (re)connecting; readmission follows via receiveAdmission. */
@@ -335,6 +345,12 @@ export interface PlayerHarness {
     activeIssueCodes(): string[];
     /** The active issue with this code, or undefined. */
     issue(code: IssueCode): Issue | undefined;
+    /**
+     * Raw inputs handed to the issue store, in order — the assertion
+     * surface for `detail`/`error` payloads that the public Issue shape
+     * deliberately does not expose.
+     */
+    reportedIssues(): readonly IssueInput[];
     /** Lets pending promise continuations (play resolves/rejects) run. */
     settle(): Promise<void>;
 }
@@ -348,7 +364,17 @@ export function createPlayerHarness(options: PlayerHarnessOptions = {}): PlayerH
     }
 
     const timeline = new FakeTimeline();
-    const store = createIssueStore(timeline.now);
+    const realStore = createIssueStore(timeline.now);
+    const issueInputs: IssueInput[] = [];
+    // Recording wrapper: keeps the REAL store semantics while exposing the
+    // raw report inputs (details the public Issue shape normalizes away).
+    const store: IssueStore = {
+        ...realStore,
+        reportIssue: (input: IssueInput): void => {
+            issueInputs.push(input);
+            realStore.reportIssue(input);
+        },
+    };
     const sent: SentCommand[] = [];
     const persistedVolumes: number[] = [];
     const state = { reloads: 0 };
@@ -447,6 +473,9 @@ export function createPlayerHarness(options: PlayerHarnessOptions = {}): PlayerH
             controller.handleSnapshot('state', baseSnapshot(snapshot));
             await Promise.resolve();
         },
+        receiveCommandRejected: (rejection): void => {
+            controller.handleCommandRejected(rejection);
+        },
         disconnect: (reason = 'transport close'): void => {
             controller.handleDisconnect(reason);
         },
@@ -455,6 +484,7 @@ export function createPlayerHarness(options: PlayerHarnessOptions = {}): PlayerH
         },
         activeIssueCodes: (): string[] => store.getIssueSnapshot().issues.map((current) => current.code),
         issue: issueFor,
+        reportedIssues: (): readonly IssueInput[] => issueInputs,
         settle: async (): Promise<void> => {
             await Promise.resolve();
             await Promise.resolve();

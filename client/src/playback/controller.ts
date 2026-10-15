@@ -5,7 +5,6 @@ import { createProjectionClock, ProjectionClock } from './clock';
 import { classifyMediaErrorCode, classifyPlayRejection } from './mediaErrors';
 import {
     ClientEvents,
-    isCommandRejection,
     isPlaybackSnapshot,
     PlaybackCommand,
 } from '../shared';
@@ -230,6 +229,21 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
      * for script-initiated play() (probed in the browser suite), so trust is
      * decided by origin: each programmatic call leaves one marker, and the
      * matching native event consumes it.
+     *
+     * Marker rules:
+     * - reserve a marker only when the platform will fire the matching
+     *   native event (play()/pause() are transition-only: calling them on
+     *   an element already in that state fires nothing);
+     * - reclaim the marker when the call is refused (a rejected play()
+     *   never fires its event — see attemptPlay);
+     * - consume exactly one marker per native event, then act only when
+     *   no marker covered it (that is the genuine-user-input case);
+     * - handleDisconnect's own element.pause() is deliberately unmarked:
+     *   reconciliation is dead while disconnected, so its native pause
+     *   safely lands in the no-marker branch and reconciles nothing;
+     * - pauseLocally's early return on an already-paused element is the
+     *   transition-only rule codified (mismatch-while-paused must not
+     *   leak a marker that would swallow the next genuine pause).
      */
     const programmatic = { plays: 0, pauses: 0, seeks: 0 };
 
@@ -271,6 +285,18 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
                 store.resolveIssue(issue.id);
             }
         }
+    }
+
+    /**
+     * Invalidates everything belonging to the current load: async
+     * continuations (opToken), deferred load work (loadGeneration), and
+     * any pending deferred seek. Run by every load restart and by
+     * disconnect.
+     */
+    function invalidateCurrentLoad(): void {
+        opToken += 1;
+        loadGeneration += 1;
+        deferredSeek = null;
     }
 
     // --- element enforcement ---------------------------------------------------
@@ -318,6 +344,13 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
 
     function pauseLocally(): void {
         opToken += 1;
+        if (element.paused) {
+            // Real elements fire `pause` only on the playing→paused
+            // transition; pausing an already-paused element fires NO
+            // native event, so reserving a marker here would swallow the
+            // next GENUINE pause.
+            return;
+        }
         programmatic.pauses += 1;
         element.pause();
     }
@@ -387,10 +420,13 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
      */
     function applyPosition(target: number, exact: boolean): void {
         if (element.readyState < HAVE_METADATA) {
+            // Exactness is sticky: a deferred EXACT seek stays exact even
+            // when later CONTINUOUS snapshots re-defer it before metadata.
             const pendingExact = deferredSeek?.exact === true || exact;
             deferredSeek = { load: loadGeneration, exact: pendingExact };
             return;
-        }        opToken += 1; // a seek invalidates in-flight play results
+        }
+        opToken += 1; // a seek invalidates in-flight play results
         programmatic.seeks += 1;
         element.currentTime = target;
     }
@@ -444,9 +480,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
 
         loadedMediaId = media.mediaId;
         // A new load invalidates operations against the previous one.
-        opToken += 1;
-        loadGeneration += 1;
-        deferredSeek = null;
+        invalidateCurrentLoad();
         armSlowLoadTimer();
 
         const children: (PlaybackSourceChild | PlaybackTrackChild)[] = [
@@ -566,10 +600,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
             // A <source> child failed: no code available (stays unknown).
             const unusable = classifyMediaErrorCode(undefined);
             if (unusable !== null) {
-                store.reportIssue({
-                    code: unusable,
-                    ...(media.mediaId !== null ? { mediaId: media.mediaId } : {}),
-                });
+                report(unusable);
             }
             return;
         }
@@ -578,11 +609,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         if (classified === null) {
             return;
         }
-        store.reportIssue({
-            code: classified,
-            ...(media.mediaId !== null ? { mediaId: media.mediaId } : {}),
-            ...(code !== undefined ? { error: { code } } : {}),
-        });
+        report(classified, code !== undefined ? { code } : undefined);
     }
 
     /** Buffering signals are diagnostics only — never issues. */
@@ -681,12 +708,9 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         },
 
         handleCommandRejected: (rejection: unknown): void => {
-            // Rejections (and garbage where one should be) surface as
-            // InvalidServerState; the dedicated UX lands in PR 2.
-            if (!isCommandRejection(rejection)) {
-                report(IssueCode.InvalidServerState, rejection);
-                return;
-            }
+            // Rejections — and garbage where one should be — surface as
+            // InvalidServerState with the rejection itself as detail; the
+            // dedicated UX lands in PR 2.
             report(IssueCode.InvalidServerState, rejection);
         },
 
@@ -702,9 +726,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
             // (pause, hide, epoch reset) are load-bearing from day one.
             connected = false;
             isAdmin = false;
-            opToken += 1;
-            loadGeneration += 1;
-            deferredSeek = null;
+            invalidateCurrentLoad();
             element.pause();
             element.controls = false;
             element.hidden = true;

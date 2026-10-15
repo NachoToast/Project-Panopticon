@@ -40,7 +40,7 @@ function cinemaUrl(port: number, media?: string): string {
     if (media !== undefined) {
         params.set('media', media);
     }
-    return `http://localhost:1730/?${params.toString()}`;
+    return `http://localhost:1732/?${params.toString()}`;
 }
 
 /** Walks the entry card: username typed, Enter pressed, connection starts. */
@@ -193,6 +193,9 @@ async function seatViewer(
 /** Fixture clips are 3s; playback polls stay generous but bounded. */
 const PLAYBACK_TIMEOUT = 20_000;
 
+/** Fixture clip length; the clips loop, so positions wrap at this value. */
+const CLIP_LENGTH_SECONDS = 3;
+
 test('chromium marks script-initiated media events trusted (marker policy evidence)', async ({ roomBrowser }): Promise<void> => {
     const page = await roomBrowser.newPage();
     // DESIGN PROBE for the trusted-emit policy: UA media events fired by
@@ -256,7 +259,11 @@ test('an approved viewer joins mid-play and stays in sync', async ({ room, roomB
     const [hostState, viewerState] = await Promise.all([videoState(page), videoState(viewer)]);
     expect(hostState).not.toBeNull();
     expect(viewerState).not.toBeNull();
-    const drift = Math.abs((hostState?.position ?? 0) - (viewerState?.position ?? 0));
+    // Wrap-aware: the clips loop at 3s, so one page reading just before a
+    // wrap and the other just after shows ~3s of RAW drift despite being
+    // in perfect sync — that reads as ~0s instead.
+    const raw = Math.abs((hostState?.position ?? 0) - (viewerState?.position ?? 0));
+    const drift = Math.min(raw, CLIP_LENGTH_SECONDS - raw);
     expect(drift).toBeLessThan(1.5);
 });
 

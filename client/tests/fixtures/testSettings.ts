@@ -13,10 +13,20 @@ import { issueStore } from '../../src/diagnostics/issues';
  * yet (the issues surface ships in PR 2).
  */
 
+// bogus.mp4 is allowlisted deliberately: it is the missing-media fixture
+// the browser suite uses to pin the unusable-source failure path.
 const ALLOWED_MEDIA = /^(?:red|green|blue|bogus)\.mp4$/;
 
-const requested = new URLSearchParams(window.location.search).get('media') ?? '';
-const file = ALLOWED_MEDIA.test(requested) ? requested : 'red.mp4';
+const requested = new URLSearchParams(window.location.search).get('media');
+const file = requested !== null && ALLOWED_MEDIA.test(requested) ? requested : 'red.mp4';
+if (requested !== null && file !== requested) {
+    // Test builds only: a typo'd ?media= would otherwise silently boot
+    // red.mp4 and surface later as a confusing 'mismatch' failure.
+    console.warn(
+        `[panopticon-tests] unrecognized ?media= value "${requested}"; ` +
+            `falling back to red.mp4 (allowlist: red|green|blue|bogus .mp4)`,
+    );
+}
 
 const settings = {
     file,

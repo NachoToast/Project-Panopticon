@@ -52,6 +52,9 @@ function spawnServer(port: number): { child: ChildProcess; started: Promise<numb
     const started = new Promise<number>((resolve: (port: number) => void, reject: (error: Error) => void): void => {
         let buffer = '';
         const timer = setTimeout((): void => {
+            // Never leave an orphan behind: the child is still running
+            // when readiness times out, so kill it before rejecting.
+            child.kill('SIGKILL');
             reject(new Error('test server did not report readiness in time'));
         }, START_TIMEOUT_MS);
 

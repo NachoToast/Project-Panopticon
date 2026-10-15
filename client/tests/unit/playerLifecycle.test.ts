@@ -413,17 +413,104 @@ describe('playback controller: media mismatch', (): void => {
         expect(harness.player.paused).toBe(false);
     });
 
+    it('emits the next genuine pause after a mismatch paused an already-paused host', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(true);
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        expect(harness.player.paused).toBe(true); // host never started
+
+        // The room watches other media while the host element is paused:
+        // the local pause is a no-op on the element, and a real element
+        // fires NO native pause event for it — so no marker may remain.
+        await harness.receivePlayingState({ mediaId: 'film-b.mp4', position: 5, revision: 1 });
+        expect(harness.activeIssueCodes()).toContain(IssueCode.MediaMismatch);
+
+        // The host genuinely plays, then genuinely pauses: exactly one
+        // pause command must reach the room (a leaked marker would
+        // swallow it and the room would never learn about the pause).
+        harness.player.paused = false;
+        harness.player.dispatch('play');
+        harness.player.paused = true;
+        harness.player.dispatch('pause');
+
+        expect(harness.sent.filter((entry) => entry.event === 'cinema:play')).toHaveLength(1);
+        expect(harness.sent.filter((entry) => entry.event === 'cinema:pause')).toHaveLength(1);
+    });
+
+    it('still reconciles a genuine viewer pause after a mismatch paused an already-paused viewer', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+        await harness.receivePausedState({ position: 1, revision: 2 });
+        expect(harness.player.paused).toBe(true);
+
+        // Mismatch arrives while the viewer is paused: no native pause
+        // fires, so no suppression marker may be reserved.
+        await harness.receivePlayingState({ mediaId: 'film-b.mp4', position: 5, revision: 3 });
+        expect(harness.activeIssueCodes()).toContain(IssueCode.MediaMismatch);
+
+        // The room returns to our media and plays: the viewer resumes.
+        await harness.receivePlayingState({ position: 6, revision: 4 });
+        expect(harness.player.paused).toBe(false);
+
+        // A genuine local pause must still reconcile back to the room
+        // (a leaked marker would skip reconciliation and strand the
+        // viewer off-room).
+        harness.player.paused = true;
+        harness.player.dispatch('pause');
+
+        expect(harness.player.paused).toBe(false);
+        expect(harness.sent).toEqual([]); // viewers never command
+    });
+
     it('exposes reload as the mismatch recovery, wired to the injected page reload', (): void => {
         const harness = createPlayerHarness();
-
-        const issue = harness.issue(IssueCode.MediaMismatch);
-        // The catalog advertises reload for the mismatch; the controller
-        // provides the action itself.
-        void issue;
 
         harness.controller.reload();
 
         expect(harness.reloads).toBe(1);
+    });
+});
+
+describe('playback controller: command rejections', (): void => {
+    it('surfaces a wrong-media rejection as InvalidServerState carrying the rejection detail', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(true);
+        harness.receiveAdmission();
+
+        harness.receiveCommandRejected('wrong-media');
+
+        expect(harness.activeIssueCodes()).toContain(IssueCode.InvalidServerState);
+        const reported = harness
+            .reportedIssues()
+            .find((input) => input.code === IssueCode.InvalidServerState);
+        // PR 2's rejection UX keys off this detail.
+        expect(reported?.detail).toBe('wrong-media');
+    });
+
+    it('surfaces an invalid-command rejection as InvalidServerState carrying the rejection detail', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(true);
+        harness.receiveAdmission();
+
+        harness.receiveCommandRejected('invalid-command');
+
+        expect(harness.activeIssueCodes()).toContain(IssueCode.InvalidServerState);
+        const reported = harness
+            .reportedIssues()
+            .find((input) => input.code === IssueCode.InvalidServerState);
+        expect(reported?.detail).toBe('invalid-command');
+    });
+
+    it('folds garbage where a rejection should be into the same InvalidServerState surface', (): void => {
+        const harness = createPlayerHarness();
+
+        harness.receiveCommandRejected({ nope: true });
+
+        expect(harness.activeIssueCodes()).toContain(IssueCode.InvalidServerState);
     });
 });
 

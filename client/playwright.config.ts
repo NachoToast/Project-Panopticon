@@ -12,18 +12,20 @@ export default defineConfig({
     retries: 0,
     reporter: [['list']],
     use: {
-        baseURL: 'http://localhost:1730',
+        baseURL: 'http://localhost:1732',
         trace: 'retain-on-failure',
     },
     webServer: {
         command: 'pnpm exec vite --config vite.test.config.ts',
-        url: 'http://localhost:1730',
+        url: 'http://localhost:1732',
+        // 1732 (not the dev server's 1730): reuseExistingServer must never
+        // silently adopt a running DEV server, which serves real settings
+        // and real media instead of the fixture alias.
         reuseExistingServer: !process.env['CI'],
         timeout: 30_000,
     },
-    // firefox/webkit need their browsers installed first:
-    //   pnpm --dir client exec playwright install firefox webkit
-    // test:browser pins --project=chromium until both are installed.
+    // firefox/webkit projects return in Task 9 with their own launch
+    // options (chromium's --autoplay-policy flag is not universal).
     projects: [
         {
             name: 'chromium',
@@ -40,14 +42,6 @@ export default defineConfig({
                     ],
                 },
             },
-        },
-        {
-            name: 'firefox',
-            use: { ...devices['Desktop Firefox'] },
-        },
-        {
-            name: 'webkit',
-            use: { ...devices['Desktop Safari'] },
         },
     ],
 });
