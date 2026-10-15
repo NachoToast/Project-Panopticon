@@ -88,11 +88,12 @@ function makeUser(
     username: string,
     isAdmin = false,
     joinBehavior?: (room: string) => Promise<void>,
+    address = '127.0.0.1',
 ): FakeUser {
     const socket =
         joinBehavior === undefined
-            ? new FakeSocket(username)
-            : new FakeSocket(username, '127.0.0.1', joinBehavior);
+            ? new FakeSocket(username, address)
+            : new FakeSocket(username, address, joinBehavior);
     return { user: new User(socket as never, username, isAdmin), socket };
 }
 
@@ -319,6 +320,26 @@ describe('WaitingRoom', (): void => {
 
         await rooms.WaitingRoom.remove(user);
         expect(rooms.WaitingRoom.hasIp(socket.handshake.address)).toBe(false);
+    });
+
+    it('keeps an ip claimed while any same-ip member is still seated', async (): Promise<void> => {
+        const rooms = createTestRooms().rooms;
+        const ip = '10.9.8.7';
+        const first = makeUser('first', false, undefined, ip);
+        const second = makeUser('second', false, undefined, ip);
+
+        await rooms.WaitingRoom.add(first.user);
+        await rooms.WaitingRoom.add(second.user);
+
+        // Approve-failure re-seat window: `first` is removed (about to
+        // be re-seated) while `second` — same ip — is still seated. The
+        // ip must stay claimed so admission still rejects a third
+        // same-ip connection.
+        await rooms.WaitingRoom.remove(first.user);
+        expect(rooms.WaitingRoom.hasIp(ip)).toBe(true);
+
+        await rooms.WaitingRoom.remove(second.user);
+        expect(rooms.WaitingRoom.hasIp(ip)).toBe(false);
     });
 });
 
