@@ -1,6 +1,11 @@
 import {
     ACTIVE_ISSUE_LIMIT,
+    currentEngineFamily,
     DiagnosticEvent,
+    formatDiagnosticsReport,
+    DIAGNOSTICS_HEADER,
+    DIAGNOSTIC_HISTORY_LIMIT,
+    isSafeToken,
     Issue,
     IssueCode,
     IssueDefinition,
@@ -104,6 +109,8 @@ const MEDIA_PLAYBACK_INCIDENT = 'media-playback';
 
 const MAX_MEDIA_ID_LENGTH = 64;
 const MAX_NAME_LENGTH = 64;
+const MAX_EVENT_TYPE_LENGTH = 64;
+const MAX_READINGS_PER_EVENT = 8;
 
 /** Module-local incident counter; ids must not depend on a secure context. */
 let incidentCounter = 0;
@@ -206,6 +213,54 @@ export function normalizeErrorName(error: unknown): string | undefined {
     }
 }
 
+/**
+ * Reduces any diagnostic event input to the allowlisted `DiagnosticEvent`
+ * shape. Unknown fields, non-numeric readings, and raw payloads are dropped;
+ * the result never references DOM events, error objects, or media elements.
+ */
+function sanitizeDiagnosticEvent(event: unknown, fallbackAt: number): DiagnosticEvent {
+    const record = toRecord(event);
+    const rawType = record['type'];
+    const rawAt = record['at'];
+
+    const sanitized: DiagnosticEvent = {
+        type:
+            typeof rawType === 'string' && rawType.length > 0 && rawType.length <= MAX_EVENT_TYPE_LENGTH
+                ? rawType
+                : 'unknown',
+        at: typeof rawAt === 'number' && Number.isFinite(rawAt) ? rawAt : fallbackAt,
+        ...pickErrorName(record['errorName']),
+        ...pickMediaErrorCode(record['mediaErrorCode']),
+        ...(record['extensionOrigin'] === true ? { extensionOrigin: true } : {}),
+        ...pickReadings(record['readings']),
+    };
+    return sanitized;
+}
+
+function pickErrorName(value: unknown): { errorName?: string } {
+    return typeof value === 'string' && value.length > 0 && value.length <= MAX_NAME_LENGTH ? { errorName: value } : {};
+}
+
+function pickMediaErrorCode(value: unknown): { mediaErrorCode?: number } {
+    return typeof value === 'number' && Number.isFinite(value) ? { mediaErrorCode: value } : {};
+}
+
+function pickReadings(value: unknown): { readings?: Readonly<Record<string, number>> } {
+    if (typeof value !== 'object' || value === null) {
+        return {};
+    }
+    const readings: Record<string, number> = {};
+    for (const [key, reading] of Object.entries(value as Record<string, unknown>)) {
+        if (Object.keys(readings).length >= MAX_READINGS_PER_EVENT) {
+            break;
+        }
+        if (isSafeToken(key) && typeof reading === 'number' && Number.isFinite(reading)) {
+            readings[key] = reading;
+        }
+    }
+    return Object.keys(readings).length > 0 ? { readings } : {};
+}
+
 function toPublicIssue(incident: MutableIssue): Issue {
     const definition: IssueDefinition = ISSUE_CATALOG[incident.code];
     const issue: Issue = {
@@ -244,6 +299,8 @@ export function createIssueStore(now: () => number = Date.now): IssueStore {
     /** Allowlisted diagnostic events (bounded ring). */
     const history: DiagnosticEvent[] = [];
     const listeners = new Set<IssueListener>();
+    let totalIncidents = 0;
+    let retiredIncidents = 0;
 
     function snapshot(): IssueSnapshot {
         return { issues: Object.freeze([...active.values()].map(toPublicIssue)) };
@@ -274,6 +331,7 @@ export function createIssueStore(now: () => number = Date.now): IssueStore {
                 break;
             }
             active.delete(oldestKey);
+            retiredIncidents += 1;
         }
     }
 
@@ -300,6 +358,7 @@ export function createIssueStore(now: () => number = Date.now): IssueStore {
                     fresh.mediaErrorCode = normalized.mediaErrorCode;
                 }
                 active.set(key, fresh);
+                totalIncidents += 1;
                 evictIfNeeded();
             } else {
                 incident.code = normalized.code;
@@ -321,6 +380,7 @@ export function createIssueStore(now: () => number = Date.now): IssueStore {
             for (const [key, incident] of active) {
                 if (incident.id === id) {
                     active.delete(key);
+                    retiredIncidents += 1;
                     notify();
                     return;
                 }
@@ -348,14 +408,28 @@ export function createIssueStore(now: () => number = Date.now): IssueStore {
 
     function recordDiagnostic(event: DiagnosticEvent): void {
         try {
-            history.push(event);
+            history.push(sanitizeDiagnosticEvent(event, now()));
+            while (history.length > DIAGNOSTIC_HISTORY_LIMIT) {
+                history.shift();
+            }
         } catch (failure) {
             console.warn('[panopticon] failed to record diagnostic', failure);
         }
     }
 
     function exportDiagnostics(): string {
-        return '';
+        try {
+            return formatDiagnosticsReport({
+                generatedAt: now(),
+                engineFamily: currentEngineFamily(),
+                activeIssues: [...active.values()].map(toPublicIssue),
+                diagnostics: [...history],
+                totalIncidentCount: totalIncidents,
+                retiredIncidentCount: retiredIncidents,
+            });
+        } catch {
+            return `${DIAGNOSTICS_HEADER}\nDiagnostics export failed.`;
+        }
     }
 
     return {

@@ -126,3 +126,146 @@ export interface DiagnosticEvent {
     /** Numeric measurements (clock skew, readiness, buffer, frames, flags). */
     readonly readings?: Readonly<Record<string, number>>;
 }
+
+/**
+ * Derives a coarse engine family from a user agent. Deliberately
+ * conservative: anything unparsable reports 'unknown'.
+ */
+export function detectEngineFamily(userAgent: string | undefined): string {
+    if (typeof userAgent !== 'string') {
+        return 'unknown';
+    }
+    if (userAgent.includes('Firefox/')) {
+        return 'gecko';
+    }
+    if (userAgent.includes('Edg/') || userAgent.includes('Chrome/')) {
+        return 'blink';
+    }
+    if (userAgent.includes('Safari/')) {
+        return 'webkit';
+    }
+    return 'unknown';
+}
+
+/** Reads the current engine family without assuming a DOM global exists. */
+export function currentEngineFamily(): string {
+    const host = globalThis as { readonly navigator?: { readonly userAgent?: unknown } };
+    const userAgent = host.navigator?.userAgent;
+    return detectEngineFamily(typeof userAgent === 'string' ? userAgent : undefined);
+}
+
+/** Describes a value by kind only; the value itself never appears in output. */
+export function describeValueKind(value: unknown): string {
+    if (value === null) {
+        return 'null';
+    }
+    if (typeof value === 'object') {
+        return Array.isArray(value) ? 'array' : 'object';
+    }
+    return typeof value;
+}
+
+/**
+ * Summarizes socket event arguments as an allowlisted description:
+ * argument count plus per-argument kind strings. Values never appear.
+ */
+export function summarizeEventArgs(args: readonly unknown[]): string {
+    if (args.length === 0) {
+        return 'args=0';
+    }
+    const kinds = args.map((arg: unknown): string => describeValueKind(arg));
+    return `args=${String(args.length)} [${kinds.join(', ')}]`;
+}
+
+/** Header line for exported diagnostics. */
+export const DIAGNOSTICS_HEADER = 'Project Panopticon diagnostics';
+
+const LOCAL_ONLY_NOTE = 'Local-only debug information. Nothing here is collected or uploaded.';
+const MAX_READINGS_PER_EVENT = 8;
+const SAFE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
+
+function toIso(timestamp: number): string {
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : 'unknown-time';
+}
+
+function isSafeToken(value: string): boolean {
+    return SAFE_TOKEN_PATTERN.test(value);
+}
+
+export { isSafeToken };
+
+/** Everything `formatDiagnosticsReport` needs; already allowlisted. */
+export interface DiagnosticsReportInput {
+    readonly generatedAt: number;
+    readonly engineFamily: string;
+    readonly activeIssues: readonly Issue[];
+    readonly diagnostics: readonly DiagnosticEvent[];
+    readonly totalIncidentCount: number;
+    readonly retiredIncidentCount: number;
+}
+
+/**
+ * Renders a human-readable diagnostics report from allowlisted fields only.
+ * Issue codes, error names, numeric codes/readings, markers, timestamps, and
+ * coarse engine info may appear; usernames, URLs/IPs, tokens, messages, and
+ * stacks may not.
+ */
+export function formatDiagnosticsReport(input: DiagnosticsReportInput): string {
+    const lines: string[] = [
+        DIAGNOSTICS_HEADER,
+        LOCAL_ONLY_NOTE,
+        `Generated: ${toIso(input.generatedAt)}`,
+        `Engine: ${input.engineFamily}`,
+        '',
+        `Active issues (${String(input.activeIssues.length)}, ${String(input.retiredIncidentCount)} retired, ${String(input.totalIncidentCount)} total incidents):`,
+    ];
+
+    if (input.activeIssues.length === 0) {
+        lines.push('  (none)');
+    }
+    for (const issue of input.activeIssues) {
+        const parts = [
+            `${issue.id} code=${issue.code}`,
+            `severity=${issue.severity}`,
+            `blocking=${issue.blocking ? 'yes' : 'no'}`,
+            `occurrences=${String(issue.occurrences)}`,
+            `first=${toIso(issue.firstSeen)}`,
+            `last=${toIso(issue.lastSeen)}`,
+        ];
+        if (issue.mediaId !== undefined && isSafeToken(issue.mediaId)) {
+            parts.push(`media=${issue.mediaId}`);
+        }
+        if (issue.mediaErrorCode !== undefined) {
+            parts.push(`mediaErrorCode=${String(issue.mediaErrorCode)}`);
+        }
+        lines.push(`  - ${parts.join(' ')}`);
+    }
+
+    lines.push('');
+    lines.push(`Diagnostic history (${String(input.diagnostics.length)}/${String(DIAGNOSTIC_HISTORY_LIMIT)} entries):`);
+    if (input.diagnostics.length === 0) {
+        lines.push('  (none)');
+    }
+    for (const event of input.diagnostics) {
+        const parts = [toIso(event.at), event.type];
+        if (event.extensionOrigin === true) {
+            parts.push('origin=EXTENSION_ORIGIN');
+        }
+        if (event.errorName !== undefined) {
+            parts.push(`name=${event.errorName}`);
+        }
+        if (event.mediaErrorCode !== undefined) {
+            parts.push(`mediaErrorCode=${String(event.mediaErrorCode)}`);
+        }
+        if (event.readings !== undefined) {
+            for (const [key, value] of Object.entries(event.readings).slice(0, MAX_READINGS_PER_EVENT)) {
+                if (isSafeToken(key)) {
+                    parts.push(`${key}=${String(value)}`);
+                }
+            }
+        }
+        lines.push(`  - ${parts.join(' ')}`);
+    }
+
+    return lines.join('\n');
+}
