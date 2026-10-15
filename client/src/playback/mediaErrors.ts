@@ -48,6 +48,7 @@ export function classifyMediaErrorCode(code: number | undefined): MediaIssueCode
         case MEDIA_ERR.SRC_NOT_SUPPORTED:
         case MEDIA_ERR.NO_ENCRYPTED_MEDIA:
             return IssueCode.MediaUnusable;
+        case undefined:
         default:
             // Unknown or absent: cannot refine network vs decode.
             return IssueCode.MediaUnusable;
@@ -66,6 +67,7 @@ export function classifyPlayRejection(name: string | undefined): IssueCode | nul
             return IssueCode.MediaUnusable;
         case 'AbortError':
             return null;
+        case undefined:
         default:
             return IssueCode.Unexpected;
     }

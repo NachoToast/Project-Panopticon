@@ -119,3 +119,96 @@ describe('playback controller: admission and volume wiring', (): void => {
         expect(harness.persistedVolumes).toEqual([0.7]);
     });
 });
+
+describe('playback controller: admission media idempotency', (): void => {
+    const SUBTITLES = [
+        { label: 'English', srclang: 'en', file: 'a.vtt' },
+        { label: 'Swedish', srclang: 'sv', file: 'b.vtt' },
+    ];
+
+    it('loads exactly one source and the configured tracks on first admission', (): void => {
+        const harness = createPlayerHarness({ subtitles: SUBTITLES });
+
+        harness.receiveAdmission();
+
+        expect(harness.player.sourceChildren).toHaveLength(1);
+        expect(harness.player.sourceChildren[0]?.src).toBe('data/film-a.mp4');
+        expect(harness.player.sourceChildren[0]?.type).toBe('video/mp4');
+        expect(harness.player.trackChildren).toHaveLength(2);
+        expect(harness.player.trackChildren[0]?.default).toBe(true);
+        expect(harness.player.trackChildren[1]?.default).toBe(false);
+        expect(harness.player.loadCalls).toBe(1);
+    });
+
+    it('readmission with the same usable media reuses the element (no reload)', (): void => {
+        const harness = createPlayerHarness({ subtitles: SUBTITLES });
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        harness.player.markDataLoaded();
+
+        harness.disconnect('transport close');
+        harness.reconnect();
+        harness.receiveAdmission();
+
+        expect(harness.player.sourceChildren).toHaveLength(1);
+        expect(harness.player.trackChildren).toHaveLength(2);
+        expect(harness.player.loadCalls).toBe(1);
+        expect(harness.player.readyState).toBe(2);
+    });
+
+    it('readmission after an unfinished load rebuilds and restarts it', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        expect(harness.player.loadCalls).toBe(1);
+
+        // Load never completed (disconnect mid-load): the element is not
+        // usable, so readmission must rebuild the source and load again.
+        harness.disconnect('transport close');
+        harness.reconnect();
+        harness.receiveAdmission();
+
+        expect(harness.player.sourceChildren).toHaveLength(1);
+        expect(harness.player.loadCalls).toBe(2);
+    });
+
+    it('does not multiply native listeners across admissions (one command per event)', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(true);
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        // A real reconnect re-runs the full admission flow.
+        harness.disconnect('transport close');
+        harness.reconnect();
+        harness.receiveAccepted(true);
+        harness.receiveAdmission();
+
+        // A genuine pause (no programmatic marker) emits exactly one command;
+        // duplicate listeners would emit duplicates.
+        harness.player.dispatch('pause');
+
+        const pauses = harness.sent.filter((entry) => entry.event === 'cinema:pause');
+        expect(pauses).toHaveLength(1);
+    });
+
+    it('announces the media identity once per host admission', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(true);
+
+        harness.receiveAdmission();
+        harness.receiveAdmission();
+
+        const announces = harness.sent.filter((entry) => entry.kind === 'announce');
+        expect(announces).toHaveLength(2);
+        expect(announces[0]?.payload).toBe('film-a.mp4');
+    });
+
+    it('viewers never announce a media selection', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAccepted(false);
+        harness.receiveAdmission();
+
+        expect(harness.sent.filter((entry) => entry.kind === 'announce')).toHaveLength(0);
+    });
+});
+

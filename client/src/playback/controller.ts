@@ -1,6 +1,6 @@
 import { IssueStore } from '../diagnostics/issues';
 import { IssueCode } from '../diagnostics/snapshot';
-import { SubtitleSettings } from '../config';
+import type { SubtitleSettings } from '../config';
 import { createProjectionClock, ProjectionClock } from './clock';
 import { classifyPlayRejection } from './mediaErrors';
 import {
@@ -164,8 +164,11 @@ export interface PlaybackController {
     dispose(): void;
 }
 
+/** readyState value at which duration/currentTime become meaningful. */
+const HAVE_METADATA = 1;
+
 export function createPlaybackController(deps: PlaybackControllerDeps): PlaybackController {
-    const { element, channel, store, media } = deps;
+    const { element, channel, store, media, createElement } = deps;
     const now = deps.now ?? ((): number => performance.now());
     const projection: ProjectionClock = createProjectionClock(now);
     const volume = deps.volume ?? {
@@ -197,6 +200,8 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
      */
     let connected = true;
     let playInFlight = false;
+    /** Media identity currently loaded into the element, if any. */
+    let loadedMediaId: string | null = null;
 
     // --- diagnostics helpers --------------------------------------------------
 
@@ -281,6 +286,51 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         } else if (!element.paused) {
             pauseLocally();
         }
+    }
+
+    // --- media loading --------------------------------------------------------
+
+    /**
+     * Ensures the element holds the configured media. Idempotent: while the
+     * element still carries a USABLE load of the same media (metadata known,
+     * no fatal error), readmission reuses it — no re-append, no reload. Any
+     * other state rebuilds the source children and restarts the load.
+     */
+    function ensureMediaLoaded(): void {
+        if (media.mediaId === null) {
+            return;
+        }
+        if (
+            loadedMediaId === media.mediaId &&
+            element.readyState >= HAVE_METADATA &&
+            element.error === null
+        ) {
+            return;
+        }
+
+        loadedMediaId = media.mediaId;
+        // A new load invalidates operations against the previous one.
+        opToken += 1;
+
+        const children: (PlaybackSourceChild | PlaybackTrackChild)[] = [
+            createElement.createSource(media.source, media.type),
+        ];
+        let sawFirstTrack = false;
+        for (const subtitle of media.subtitles) {
+            const track = createElement.createTrack(
+                subtitle.label,
+                subtitle.srclang,
+                `data/${subtitle.file}`,
+            );
+            if (!sawFirstTrack) {
+                // The first configured subtitle becomes the default track.
+                track.default = true;
+                sawFirstTrack = true;
+            }
+            children.push(track);
+        }
+        element.replaceChildren(...children);
+        element.load();
     }
 
     // --- snapshot ingestion ------------------------------------------------------
@@ -371,6 +421,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         element.hidden = false;
         element.controls = true;
         element.volume = volume.initial();
+        ensureMediaLoaded();
 
         if (isAdmin && media.mediaId !== null) {
             // Announced at admission, not on Connection.Accepted: the server
