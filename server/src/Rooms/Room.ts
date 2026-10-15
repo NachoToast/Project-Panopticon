@@ -9,7 +9,7 @@ type ClientEventName = keyof ClientEvents.All & string;
 /** A listener this room registered on a member's socket. */
 interface OwnedListener {
     readonly event: string;
-    readonly listener: (...args: unknown[]) => void;
+    readonly listener: (...args: unknown[]) => void | Promise<void>;
 }
 
 /**
@@ -144,10 +144,7 @@ export abstract class Room {
             }
         };
 
-        user.socket.on(
-            event as ClientEventName,
-            guarded as unknown as ClientEvents.All[ClientEventName],
-        );
+        user.socket.on(event as ClientEventName, guarded);
 
         const owned = this.ownedListeners.get(user.id) ?? [];
         owned.push({ event, listener: guarded });
@@ -180,6 +177,14 @@ export abstract class Room {
         if (!this.users.has(user.id)) return;
 
         for (const owned of this.ownedListeners.get(user.id) ?? []) {
+            // The stored guard may return a promise; socket.off's
+            // listener parameter is void-typed. TS's void-return
+            // assignability accepts the mismatch (so every silencing
+            // cast gets rejected as unnecessary) while
+            // no-misused-promises still flags it — the two rules are
+            // unsatisfiable together on this line. off() must receive
+            // the exact stored reference, so suppressing with intent.
+            // eslint-disable-next-line @typescript-eslint/no-misused-promises -- identity matters: only the exact reference removes the listener
             user.socket.off(owned.event, owned.listener);
         }
         this.ownedListeners.delete(user.id);

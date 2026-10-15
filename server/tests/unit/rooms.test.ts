@@ -1,76 +1,12 @@
-import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RoomsRegistry } from '../../src/rooms.js';
 import { User } from '../../src/User.js';
+import { asServerSocket, FakeSocket } from '../helpers/fakeSocket.js';
 import { createTestRooms } from '../helpers/testApp.js';
 
 // Room membership semantics: idempotent adds, no-op removes for
 // non-members, OWNED listener cleanup (never removeAllListeners), rollback
 // when socket.join() fails, and admin approve targeting.
-
-/** A stand-in socket with real EventEmitter listener semantics. */
-class FakeSocket extends EventEmitter {
-    public readonly id: string;
-
-    public readonly handshake: { address: string; auth: Record<string, unknown> };
-
-    public readonly broadcasts: [room: string, event: string][];
-
-    public readonly emitted: string[];
-
-    public readonly joins: string[];
-
-    public readonly leaves: string[];
-
-    /** Controls what socket.join() does; replace per-test. */
-    public readonly joinBehavior: (room: string) => Promise<void>;
-
-    public constructor(
-        id: string,
-        address = '127.0.0.1',
-        joinBehavior: (room: string) => Promise<void> = (): Promise<void> =>
-            Promise.resolve(),
-    ) {
-        super();
-        this.id = id;
-        this.handshake = { address, auth: {} };
-        this.joinBehavior = joinBehavior;
-        this.broadcasts = [];
-        this.emitted = [];
-        this.joins = [];
-        this.leaves = [];
-    }
-
-    public get broadcast(): {
-        to: (room: string) => { emit: (event: string, ...args: unknown[]) => void };
-    } {
-        return {
-            to: (room: string) => ({
-                emit: (event: string): void => {
-                    this.broadcasts.push([room, event]);
-                },
-            }),
-        };
-    }
-
-    public async join(room: string): Promise<void> {
-        this.joins.push(room);
-        await this.joinBehavior(room);
-    }
-
-    public leave(room: string): void {
-        this.leaves.push(room);
-    }
-
-    public override emit(event: string, ...args: unknown[]): boolean {
-        this.emitted.push(event);
-        return super.emit(event, ...args);
-    }
-
-    public listenersAny(): unknown[] {
-        return [];
-    }
-}
 
 /** Flushes pending microtasks (async event handlers) before asserting. */
 function flush(): Promise<void> {
@@ -90,11 +26,14 @@ function makeUser(
     joinBehavior?: (room: string) => Promise<void>,
     address = '127.0.0.1',
 ): FakeUser {
-    const socket =
-        joinBehavior === undefined
-            ? new FakeSocket(username, address)
-            : new FakeSocket(username, address, joinBehavior);
-    return { user: new User(socket as never, username, isAdmin), socket };
+    const socket = new FakeSocket(
+        username,
+        joinBehavior === undefined ? { address } : { address, joinBehavior },
+    );
+    return {
+        user: new User(asServerSocket(socket), username, isAdmin),
+        socket,
+    };
 }
 
 /** Events a fake socket currently has any listeners for. */

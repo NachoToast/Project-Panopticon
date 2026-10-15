@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createApplication } from '../../src/app.js';
 import { ServerEvents } from '../../src/shared/index.js';
-import { FakeSocket } from '../helpers/fakeSocket.js';
+import { asServerSocket, FakeSocket } from '../helpers/fakeSocket.js';
 import {
     closeTestApps,
     connect,
@@ -354,8 +354,8 @@ describe('admission edge cases with fake sockets', (): void => {
             joinBehavior: slowJoin,
         });
 
-        const first = app.handleConnection(socketA as never);
-        const second = app.handleConnection(socketB as never);
+        const first = app.handleConnection(asServerSocket(socketA));
+        const second = app.handleConnection(asServerSocket(socketB));
         await Promise.all([first, second]);
 
         const admins = app.rooms.Admins.getUserList();
@@ -385,7 +385,7 @@ describe('admission edge cases with fake sockets', (): void => {
             joinBehavior: joinFails,
         });
 
-        await app.handleConnection(broken as never);
+        await app.handleConnection(asServerSocket(broken));
 
         expect(app.rooms.Admins.isEmpty()).toBe(true);
         expect(app.rooms.WaitingRoom.isEmpty()).toBe(true);
@@ -394,7 +394,7 @@ describe('admission edge cases with fake sockets', (): void => {
         const healthy = new FakeSocket('healthy', {
             auth: { username: 'ghost' },
         });
-        await app.handleConnection(healthy as never);
+        await app.handleConnection(asServerSocket(healthy));
         expect(healthy.emitted).toContain(ServerEvents.Connection.Accepted);
     });
 });
