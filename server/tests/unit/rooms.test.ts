@@ -328,9 +328,11 @@ describe('async listener failure containment', (): void => {
             process.off('unhandledRejection', onUnhandledRejection);
         }
 
-        // Both failures land in the logger...
+        // Both failures land in the logger (with the actual error text,
+        // not a stringified-empty "{}")...
         expect(lines.join('')).toContain('cinema admission failed');
         expect(lines.join('')).toContain('admin:approve');
+        expect(lines.join('')).toContain('re-seat adapter unavailable');
         // ...and the re-seat rejection never escapes as an
         // unhandledRejection (process death on Node >= 15).
         expect(unhandled).toEqual([]);

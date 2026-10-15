@@ -126,4 +126,30 @@ describe('createLogger', (): void => {
         expect(output).toContain('careful');
         expect(output).toContain('broken');
     });
+
+    it('logs an Error as its stack, not an empty object', (): void => {
+        const fake = fakeStream({ tty: false, cursorControls: false });
+        const logger = createLogger(fake.stream, renderer(['unused']));
+
+        logger.error('room join failed', new Error('adapter unavailable'));
+
+        // JSON.stringify(new Error()) is "{}" — message and stack are
+        // not enumerable — which made every logged error unreadable.
+        const output = fake.writes.join('');
+        expect(output).toContain('adapter unavailable');
+    });
+
+    it('does not throw on circular metadata', (): void => {
+        const fake = fakeStream({ tty: false, cursorControls: false });
+        const logger = createLogger(fake.stream, renderer(['unused']));
+        const circular: Record<string, unknown> = {};
+        circular['self'] = circular;
+
+        // JSON.stringify throws on cycles; the error path must never
+        // fail to log (and never crash the caller) because of it.
+        expect((): void => {
+            logger.warn('careful', circular);
+        }).not.toThrow();
+        expect(fake.writes.join('')).toContain('careful');
+    });
 });

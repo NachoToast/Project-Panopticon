@@ -100,6 +100,15 @@ function formatMeta(message: string, meta: readonly unknown[]): string {
 function describe(item: unknown): string {
     if (typeof item === 'string') return item;
 
-    const json: unknown = JSON.stringify(item);
-    return typeof json === 'string' ? json : String(item);
+    // JSON.stringify(new Error()) is "{}" (message/stack are not
+    // enumerable) and it THROWS on circular structures — both fatal for
+    // a logging path that must never fail to log.
+    if (item instanceof Error) return item.stack ?? String(item);
+
+    try {
+        const json: unknown = JSON.stringify(item);
+        return typeof json === 'string' ? json : String(item);
+    } catch {
+        return String(item);
+    }
 }
