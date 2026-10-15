@@ -1,5 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
-import { ENGINE_LAUNCH_OPTIONS } from './tests/browser/engineLaunch';
+import { ENGINE_LAUNCH_OPTIONS, ENGINE_NAMES, type EngineName } from './tests/browser/engineLaunch';
+
+/** Device descriptor per engine for the default `page` fixture. */
+const ENGINE_DEVICES: Readonly<Record<EngineName, keyof typeof devices>> = {
+    chromium: 'Desktop Chrome',
+    firefox: 'Desktop Firefox',
+    webkit: 'Desktop Safari',
+};
 
 // Browser tests run serially (workers: 1) and each test spawns its OWN room
 // server on an ephemeral port (see tests/browser/roomServer.ts), so cinema
@@ -11,7 +18,12 @@ export default defineConfig({
     fullyParallel: false,
     workers: 1,
     retries: 0,
-    reporter: [['list']],
+    // list: every skip is visible in plain stdout, including the
+    // [capability-probe] summary lines the playback suite logs per
+    // engine — the only skip evidence a CI log shows. html: writes
+    // playwright-report/ for local debugging and the CI artifact
+    // upload (never auto-opens a browser window).
+    reporter: [['list'], ['html', { open: 'never' }]],
     use: {
         baseURL: 'http://localhost:1732',
         trace: 'retain-on-failure',
@@ -25,32 +37,18 @@ export default defineConfig({
         reuseExistingServer: !process.env['CI'],
         timeout: 30_000,
     },
-    // All three engines run the full suite. Per-engine launch options
-    // (chromium's autoplay flag, firefox's autoplay prefs) live in one
-    // place: tests/browser/engineLaunch.ts. The playback suite launches
-    // its own per-test browsers through that module; the options below
-    // cover the default `page` fixture used by the smoke test.
-    projects: [
-        {
-            name: 'chromium',
-            use: {
-                ...devices['Desktop Chrome'],
-                launchOptions: ENGINE_LAUNCH_OPTIONS.chromium,
-            },
+    // All three engines run the full suite. The engine set, per-engine
+    // launch options (chromium's autoplay flag, firefox's autoplay
+    // prefs), and device descriptors live in one place:
+    // tests/browser/engineLaunch.ts drives the projects table, and the
+    // playback suite launches its own per-test browsers through that
+    // module; the options below cover the default `page` fixture used
+    // by the smoke test.
+    projects: ENGINE_NAMES.map((engine: EngineName) => ({
+        name: engine,
+        use: {
+            ...devices[ENGINE_DEVICES[engine]],
+            launchOptions: ENGINE_LAUNCH_OPTIONS[engine],
         },
-        {
-            name: 'firefox',
-            use: {
-                ...devices['Desktop Firefox'],
-                launchOptions: ENGINE_LAUNCH_OPTIONS.firefox,
-            },
-        },
-        {
-            name: 'webkit',
-            use: {
-                ...devices['Desktop Safari'],
-                launchOptions: ENGINE_LAUNCH_OPTIONS.webkit,
-            },
-        },
-    ],
+    })),
 });

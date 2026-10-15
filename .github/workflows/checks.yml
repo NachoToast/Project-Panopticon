@@ -1,12 +1,16 @@
-# Continuous integration: every push and pull request runs the same gates
-# that developers run locally (check-all, tests, builds) plus the full
-# three-engine browser matrix. Jobs are grouped to keep setup overhead low
-# while still isolating the three toolchains (pnpm workspaces, bun, and
-# the Playwright browser suite).
+# Continuous integration: every push to main and every pull request runs
+# the same gates that developers run locally (check-all, tests, builds)
+# plus the full three-engine browser matrix. Jobs are grouped to keep
+# setup overhead low while still isolating the three toolchains (pnpm
+# workspaces, bun, and the Playwright browser suite).
 name: checks
 
 on:
+  # PRs are covered by the pull_request trigger; restricting push to
+  # main stops same-repo PR branches from double-running (two runs per
+  # push, in uncancellable distinct concurrency groups).
   push:
+    branches: [main]
   pull_request:
 
 # Read-only by principle: nothing here needs write access, and no secrets
@@ -50,7 +54,7 @@ jobs:
         run: pnpm --dir client run check-all
 
       - name: Client unit + HTTP contract tests
-        run: pnpm --dir client exec vitest run
+        run: pnpm --dir client run test
 
       - name: Client build
         run: pnpm --dir client run build
@@ -115,14 +119,23 @@ jobs:
       - name: Bootstrap test media fixtures
         run: node client/tests/scripts/generate-media.mjs
 
-      # Browser binaries are large; cache them keyed on the lockfile (which
-      # pins @playwright/test, and with it the browser revisions). The apt
-      # system packages from --with-deps are cheap and not cached.
+      # Browser binaries are large; cache them keyed on the Playwright
+      # package version (which pins the browser revisions), not the whole
+      # lockfile — unrelated dependency changes then no longer
+      # re-download every browser. The apt system packages from
+      # --with-deps are cheap and not cached. The restore-key prefix
+      # fallback still reuses the previous cache until a matching key is
+      # built.
+      - name: Resolve Playwright version
+        run: >
+          echo "PLAYWRIGHT_VERSION=$(pnpm --dir client exec playwright --version
+          | sed 's/^Version //')" >> "$GITHUB_ENV"
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
           restore-keys: playwright-${{ runner.os }}-
 
       - name: Install Playwright browsers (chromium, firefox, webkit + system deps)
@@ -134,3 +147,12 @@ jobs:
       # skip with a documented reason instead of failing or being hidden.
       - name: Browser tests (chromium + firefox + webkit)
         run: pnpm --dir client run test:browser
+
+      # The html reporter writes playwright-report/ (also on failure);
+      # upload it unconditionally so a red run's report is still pullable.
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: client/playwright-report/

@@ -7,10 +7,14 @@ covered by automation, it says so explicitly.
 ## How to read a playback failure
 
 The client maintains a local issue store. `exportDiagnostics()`
-(`client/src/diagnostics/issues.ts`) renders a plain-text report; the
-UI button for it ships with the PR 2 issues surface — until then the
-export is reachable programmatically (the browser tests read the same
-store). A user shares it by copying the text to you.
+(`client/src/diagnostics/issues.ts`) renders a plain-text report — but
+there is no in-app export button yet; it ships in a forthcoming
+release. Until then the export is reachable programmatically (the
+browser tests read the same store). To diagnose a live report in the
+meantime, collect manually: the browser and its exact version, the
+page URL, the devtools console output, and what the network panel
+shows for the media request (status, content type, whether the
+response body loads at all).
 
 What the report contains — and nothing else:
 

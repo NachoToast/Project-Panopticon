@@ -1,5 +1,5 @@
 import { expect, test as base, type Browser, type Page } from '@playwright/test';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { TestIssueStoreHandle } from '../fixtures/testSettings';
@@ -38,6 +38,13 @@ const MEDIA_FAILURE_CODES = ['media-network', 'media-decode', 'media-unusable'] 
  *   seek on a playing element (verified on Linux WebKit 26.6 — the clock
  *   freezes near the seek target while the fetcher sits idle), so
  *   seek-choreography tests skip there.
+ * - truncation reporting: plays a 40%-prefix clip served over HTTP and
+ *   watches whether the engine fires `error` when playback runs off the
+ *   end of the available data (a 6s bound). Chromium and Firefox do;
+ *   Playwright's WebKit instead stalls the fetch silently and never
+ *   fires anything (verified on Linux WebKit 26.6), so the
+ *   truncated-media classification is asserted only where the probe
+ *   says the engine reports the failure.
  *
  * Why decode probing exists: Playwright's bundled WebKit on macOS has no
  * H.264/AAC decoders — canPlayType answers "probably", but the pipeline
@@ -65,6 +72,30 @@ const SEEK_SKIP_REASON =
 interface EngineCapabilities {
     readonly decodes: boolean;
     readonly seeks: boolean;
+    /**
+     * Does the engine fire a media `error` when playback runs off the
+     * end of a truncated file over HTTP? (WebKit instead stalls the
+     * fetch silently — see the truncation probe.)
+     */
+    readonly reportsTruncation: boolean;
+}
+
+/** Truncation-probe fixture name (inside the fixture public data dir). */
+const TRUNCATED_PROBE_MEDIA = 'truncated-probe.mp4';
+
+/**
+ * Writes a 40%-length prefix of the red fixture as `name` in the fixture
+ * data dir (served at /data/<name>) and returns its path. The mp4's
+ * +faststart puts the moov atom first, so the prefix survives the cut:
+ * the element boots, then playback runs off the end of the available
+ * data mid-stream — a DIFFERENT failure from a plain 404.
+ */
+async function writeTruncatedFixture(name: string): Promise<string> {
+    const source = join(FIXTURE_DATA_DIR, 'red.mp4');
+    const full = await readFile(source);
+    const target = join(FIXTURE_DATA_DIR, name);
+    await writeFile(target, full.subarray(0, Math.floor(full.length * 0.4)));
+    return target;
 }
 
 /** Plays the fixture muted+looping; resolves when the clock passes 0.3s. */
@@ -129,7 +160,10 @@ async function probeEngineCapabilities(browser: Browser): Promise<EngineCapabili
             });
         });
         if (!decodes) {
-            return { decodes: false, seeks: false };
+            // Decode-failed engines skip the truncation probe too: the
+            // result is irrelevant — they cannot run the truncated-media
+            // test anyway (decodableMedia skips it first).
+            return { decodes: false, seeks: false, reportsTruncation: false };
         }
 
         // Seek survival: rewind a playing element and require the clock
@@ -145,7 +179,43 @@ async function probeEngineCapabilities(browser: Browser): Promise<EngineCapabili
                   .then((): Promise<boolean> => waitForClockAdvance(page))
                   .catch((): boolean => false)
             : false;
-        return { decodes, seeks };
+
+        // Truncation reporting: play the truncated prefix clip over HTTP
+        // and watch for a media `error` as playback runs off the end of
+        // the available data. NOT a blob URL — WebKit's silent stall is
+        // fetcher-side, so a blob probe would report truncation there
+        // and re-enable an assertion that then hangs. The probe fixture
+        // is scaffolding: it is removed afterwards.
+        const probeFixture = await writeTruncatedFixture(TRUNCATED_PROBE_MEDIA);
+        let reportsTruncation: boolean;
+        try {
+            reportsTruncation = await page.evaluate(
+                async (source: string): Promise<boolean> => {
+                    const video = document.createElement('video');
+                    video.id = 'capability-probe-truncated';
+                    video.muted = true;
+                    video.preload = 'auto';
+                    document.body.appendChild(video);
+                    return await new Promise<boolean>((resolve: (value: boolean) => void): void => {
+                        const bound = window.setTimeout((): void => {
+                            resolve(false);
+                        }, 6_000);
+                        video.addEventListener('error', (): void => {
+                            window.clearTimeout(bound);
+                            resolve(true);
+                        });
+                        // The listener is armed BEFORE the source is set,
+                        // so an immediate load error cannot be missed.
+                        video.src = source;
+                        void video.play().catch((): void => undefined);
+                    });
+                },
+                `/data/${TRUNCATED_PROBE_MEDIA}`,
+            );
+        } finally {
+            await rm(probeFixture, { force: true });
+        }
+        return { decodes, seeks, reportsTruncation };
     } finally {
         await context.close();
     }
@@ -153,6 +223,46 @@ async function probeEngineCapabilities(browser: Browser): Promise<EngineCapabili
 
 /** Cached probe results per engine (workers run sequentially). */
 const capabilityProbeCache = new Map<string, Promise<EngineCapabilities>>();
+
+/** Renders an unknown thrown value for an error message. */
+function describeThrown(value: unknown): string {
+    return value instanceof Error ? value.message : String(value);
+}
+
+/**
+ * The (cached) capabilities of the CURRENT project's engine. The first
+ * call per engine runs the probes and logs one summary line: with the
+ * list reporter that carries the skip evidence into CI stdout, where a
+ * bare skip line would show nothing. A REJECTED probe is dropped from
+ * the cache and rethrown with engine context, so one transient failure
+ * cannot cascade an opaque cached rejection into every capability test.
+ */
+async function engineCapabilities(browser: Browser, browserName: string): Promise<EngineCapabilities> {
+    const runsProbe = !capabilityProbeCache.has(browserName);
+    let probe = capabilityProbeCache.get(browserName);
+    if (probe === undefined) {
+        probe = probeEngineCapabilities(browser);
+        capabilityProbeCache.set(browserName, probe);
+    }
+    let capabilities: EngineCapabilities;
+    try {
+        capabilities = await probe;
+    } catch (cause: unknown) {
+        capabilityProbeCache.delete(browserName);
+        // The tsconfig lib is ES2020, which predates Error's `cause`
+        // option, so the original error is rendered into the message
+        // instead of being attached.
+        // eslint-disable-next-line preserve-caught-error
+        throw new Error(`capability probe failed for ${browserName}: ${describeThrown(cause)}`);
+    }
+    if (runsProbe) {
+        console.log(
+            `[capability-probe] ${browserName}: decodes=${String(capabilities.decodes)} ` +
+                `seeks=${String(capabilities.seeks)} reportsTruncation=${String(capabilities.reportsTruncation)}`,
+        );
+    }
+    return capabilities;
+}
 
 const test = base.extend<{
     room: RoomServer;
@@ -171,14 +281,7 @@ const test = base.extend<{
     roomBrowser: async ({ playwright, browserName }, use: (browser: Browser) => Promise<void>): Promise<void> => {
         // One fresh browser per test in the CURRENT project's engine, with
         // the shared per-engine launch options (autoplay accommodations).
-        const browser = await launchEngineBrowser(
-            {
-                chromium: playwright.chromium,
-                firefox: playwright.firefox,
-                webkit: playwright.webkit,
-            },
-            browserName,
-        );
+        const browser = await launchEngineBrowser(playwright, browserName);
         await use(browser);
         await browser.close();
     },
@@ -190,12 +293,7 @@ const test = base.extend<{
         use: (value: null) => Promise<void>,
         testInfo,
     ): Promise<void> => {
-        let probe = capabilityProbeCache.get(browserName);
-        if (probe === undefined) {
-            probe = probeEngineCapabilities(roomBrowser);
-            capabilityProbeCache.set(browserName, probe);
-        }
-        const capabilities = await probe;
+        const capabilities = await engineCapabilities(roomBrowser, browserName);
         testInfo.skip(!capabilities.decodes, DECODE_SKIP_REASON);
         await use(null);
     },
@@ -206,12 +304,7 @@ const test = base.extend<{
         use: (value: null) => Promise<void>,
         testInfo,
     ): Promise<void> => {
-        let probe = capabilityProbeCache.get(browserName);
-        if (probe === undefined) {
-            probe = probeEngineCapabilities(roomBrowser);
-            capabilityProbeCache.set(browserName, probe);
-        }
-        const capabilities = await probe;
+        const capabilities = await engineCapabilities(roomBrowser, browserName);
         testInfo.skip(!capabilities.seeks, SEEK_SKIP_REASON);
         await use(null);
     },
@@ -635,9 +728,16 @@ test('end of media pauses the whole room once, without a restart loop', async ({
     // a windowed range aliases with the poll cadence (samples ~1s apart
     // lock-step around a 3s cycle and can skip a narrow window forever).
     await seekVideo(host, 0);
+    // Safe as a windowed predicate: the poll's first sample is immediate
+    // after the seek, and the viewer's rewind lands mid-poll, so its
+    // clock re-enters [0, 0.5) — lock-step aliasing cannot have skipped
+    // the window from the start.
     await untilVideo(viewer, (state) => state.position < 0.5, 'viewer rewound with the room');
     await untilVideo(host, (state) => state.position >= 0.9, 'host past one second', PLAYBACK_TIMEOUT);
     await seekVideo(viewer, 0);
+    // Same windowed predicate, same argument — except stronger: this
+    // LOCAL seek lands before the poll's immediate first sample, so the
+    // position starts inside the window.
     await untilVideo(viewer, (state) => state.position < 0.5, 'viewer rewound itself');
 
     // NOW opt out of the loop accommodation: this test needs the clips to
@@ -688,19 +788,14 @@ test('missing media reports unusable and never crashes', async ({ room, roomBrow
     expect(await videoState(page)).not.toBeNull();
 });
 
-test('a truncated media file classifies as a media failure without crashing', async ({ room, roomBrowser, decodableMedia }): Promise<void> => {
+test('a truncated media file classifies as a media failure without crashing', async ({ room, roomBrowser, browserName, decodableMedia }): Promise<void> => {
     void decodableMedia;
     // Construct the fixture at test time: a 40%-length prefix of the
-    // engine's red clip. The mp4's +faststart puts the moov atom first, so
-    // it survives the cut and the element boots — then playback runs off
-    // the end of the available data mid-stream, a DIFFERENT failure from
-    // the bogus clip's plain 404. Engines report truncation differently
-    // (decode error, network error, or an unusable source), so the
-    // assertion is on the failure FAMILY.
-    const source = join(FIXTURE_DATA_DIR, 'red.mp4');
-    const full = await readFile(source);
-    const truncated = join(FIXTURE_DATA_DIR, 'truncated.mp4');
-    await writeFile(truncated, full.subarray(0, Math.floor(full.length * 0.4)));
+    // engine's red clip (see writeTruncatedFixture for why the cut
+    // survives). Engines report truncation differently (decode error,
+    // network error, or an unusable source), so the assertion is on the
+    // failure FAMILY.
+    await writeTruncatedFixture('truncated.mp4');
 
     const page = await roomBrowser.newPage();
     await enterAs(page, cinemaUrl(room.port, 'truncated.mp4'), 'host');
@@ -712,8 +807,10 @@ test('a truncated media file classifies as a media failure without crashing', as
     // end of the available data; WebKit instead stalls the fetch silently
     // and never fires `error` (verified on Linux WebKit 26.6), so there is
     // nothing for the app to classify there — the classification
-    // expectation applies only to engines that report the failure.
-    if (test.info().project.name !== 'webkit') {
+    // expectation applies only to engines whose capability probe reported
+    // that they surface the failure.
+    const capabilities = await engineCapabilities(roomBrowser, browserName);
+    if (capabilities.reportsTruncation) {
         await expect
             .poll(
                 async (): Promise<boolean> => {

@@ -1,7 +1,19 @@
 import type { Browser, BrowserType, LaunchOptions } from '@playwright/test';
 
-/** The engines the browser suite runs (one Playwright project each). */
-export type EngineName = 'chromium' | 'firefox' | 'webkit';
+/**
+ * The engines the browser suite runs (one Playwright project each).
+ * This array is the single source of truth for the engine set: the
+ * EngineName union is derived from it, playwright.config.ts builds its
+ * projects table from it, and launchEngineBrowser validates against it.
+ */
+export const ENGINE_NAMES = ['chromium', 'firefox', 'webkit'] as const;
+
+export type EngineName = (typeof ENGINE_NAMES)[number];
+
+/** Is `value` one of ENGINE_NAMES? */
+function isEngineName(value: string): value is EngineName {
+    return (ENGINE_NAMES as readonly string[]).includes(value);
+}
 
 /**
  * Per-engine launch options for REAL media playback in the harness.
@@ -38,19 +50,20 @@ export const ENGINE_LAUNCH_OPTIONS: Readonly<Record<EngineName, LaunchOptions>> 
     webkit: {},
 };
 
-/** Launchers for each engine, taken from the Playwright instance in scope. */
-export type EngineLaunchers = Readonly<Record<EngineName, BrowserType<LaunchOptions>>>;
+/**
+ * The `playwright` test fixture, structurally: its engine members are
+ * keyed by EngineName (the full module namespace satisfies this).
+ */
+type EngineModule = Readonly<Record<EngineName, BrowserType>>;
 
 /**
  * Launches one browser for the named engine with the shared per-engine
- * options. Unknown names fall back to chromium (the config only defines
- * chromium/firefox/webkit projects, so this is a defensive default).
+ * options. Unknown names throw (fail loud): a silent fallback could mask
+ * a misconfigured project by quietly running the wrong engine.
  */
-export function launchEngineBrowser(launchers: EngineLaunchers, engine: string, headless?: boolean): Promise<Browser> {
-    const resolved: EngineName = (['chromium', 'firefox', 'webkit'] as const).includes(
-        engine as EngineName,
-    )
-        ? (engine as EngineName)
-        : 'chromium';
-    return launchers[resolved].launch({ ...ENGINE_LAUNCH_OPTIONS[resolved], ...(headless === undefined ? {} : { headless }) });
+export function launchEngineBrowser(playwright: EngineModule, engine: string): Promise<Browser> {
+    if (!isEngineName(engine)) {
+        throw new Error(`unknown browser engine "${engine}" (expected one of: ${ENGINE_NAMES.join(', ')})`);
+    }
+    return playwright[engine].launch(ENGINE_LAUNCH_OPTIONS[engine]);
 }
