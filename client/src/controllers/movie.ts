@@ -63,8 +63,6 @@ export function addListeners(): void {
         }
 
         update();
-
-        makeAudioController();
     });
 
     socket.on(ServerEvents.Cinema.Playing, (_, time) => {
@@ -134,21 +132,13 @@ function getStoredVolume(): number {
     });
 }
 
-function makeAudioController(): void {
-    const audioContext = new AudioContext();
-    const audioSource = audioContext.createMediaElementSource(element);
-    const gainNode = audioContext.createGain();
-
-    audioSource.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-
-    function handleVolumeChange(): void {
-        safeStorage.writeStoredString(LOCAL_STORAGE_KEY, String(element.volume));
-
-        gainNode.gain.value = 3 + 2 * element.volume;
-    }
-
-    element.onvolumechange = handleVolumeChange;
-
-    handleVolumeChange();
+/**
+ * Persists the native element volume whenever the user changes it. Native
+ * audio only: element.volume is the single volume pathway, and persistence
+ * failures are contained by the storage wrapper.
+ */
+function persistVolume(): void {
+    safeStorage.writeStoredString(LOCAL_STORAGE_KEY, String(element.volume));
 }
+
+element.onvolumechange = persistVolume;
