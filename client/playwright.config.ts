@@ -14,6 +14,9 @@ export default defineConfig({
         baseURL: 'http://localhost:1730',
         trace: 'retain-on-failure',
     },
+    // firefox/webkit need their browsers installed first:
+    //   pnpm --dir client exec playwright install firefox webkit
+    // test:browser pins --project=chromium until both are installed.
     projects: [
         {
             name: 'chromium',
