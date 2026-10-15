@@ -18,7 +18,7 @@
         "lint": "eslint src tests serve.mjs --max-warnings=0",
         "check-all": "pnpm run typecheck && pnpm run lint",
         "test": "vitest run",
-        "test:browser": "playwright test --project=chromium",
+        "test:browser": "playwright test",
         "start": "node serve.mjs",
         "dev": "vite --host --port=1730"
     },

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { ENGINE_LAUNCH_OPTIONS } from './tests/browser/engineLaunch';
 
 // Browser tests run serially (workers: 1) and each test spawns its OWN room
 // server on an ephemeral port (see tests/browser/roomServer.ts), so cinema
@@ -24,23 +25,31 @@ export default defineConfig({
         reuseExistingServer: !process.env['CI'],
         timeout: 30_000,
     },
-    // firefox/webkit projects return in Task 9 with their own launch
-    // options (chromium's --autoplay-policy flag is not universal).
+    // All three engines run the full suite. Per-engine launch options
+    // (chromium's autoplay flag, firefox's autoplay prefs) live in one
+    // place: tests/browser/engineLaunch.ts. The playback suite launches
+    // its own per-test browsers through that module; the options below
+    // cover the default `page` fixture used by the smoke test.
     projects: [
         {
             name: 'chromium',
             use: {
                 ...devices['Desktop Chrome'],
-                launchOptions: {
-                    args: [
-                        // Media playback must not depend on a user gesture
-                        // in the harness; interaction-gated starts are
-                        // unit-tested through the controller's refused-play
-                        // paths instead. (Headless chromium stalls AUDIBLE
-                        // media clocks; specs mute the element instead.)
-                        '--autoplay-policy=no-user-gesture-required',
-                    ],
-                },
+                launchOptions: ENGINE_LAUNCH_OPTIONS.chromium,
+            },
+        },
+        {
+            name: 'firefox',
+            use: {
+                ...devices['Desktop Firefox'],
+                launchOptions: ENGINE_LAUNCH_OPTIONS.firefox,
+            },
+        },
+        {
+            name: 'webkit',
+            use: {
+                ...devices['Desktop Safari'],
+                launchOptions: ENGINE_LAUNCH_OPTIONS.webkit,
             },
         },
     ],

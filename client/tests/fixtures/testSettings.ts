@@ -14,8 +14,11 @@ import { issueStore } from '../../src/diagnostics/issues';
  */
 
 // bogus.mp4 is allowlisted deliberately: it is the missing-media fixture
-// the browser suite uses to pin the unusable-source failure path.
-const ALLOWED_MEDIA = /^(?:red|green|blue|bogus)\.mp4$/;
+// the browser suite uses to pin the unusable-source failure path (no such
+// file exists on disk — it 404s). truncated.mp4 also does not exist on
+// disk: the browser suite writes it at test time (a prefix of red.mp4)
+// to pin the corrupt/truncated-source path.
+const ALLOWED_MEDIA = /^(?:red|green|blue|bogus|truncated)\.mp4$/;
 
 const requested = new URLSearchParams(window.location.search).get('media');
 const file = requested !== null && ALLOWED_MEDIA.test(requested) ? requested : 'red.mp4';
@@ -24,7 +27,7 @@ if (requested !== null && file !== requested) {
     // red.mp4 and surface later as a confusing 'mismatch' failure.
     console.warn(
         `[panopticon-tests] unrecognized ?media= value "${requested}"; ` +
-            `falling back to red.mp4 (allowlist: red|green|blue|bogus .mp4)`,
+            `falling back to red.mp4 (allowlist: red|green|blue|bogus|truncated .mp4)`,
     );
 }
 
