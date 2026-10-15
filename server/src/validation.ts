@@ -1,4 +1,4 @@
-import { logApplicationState, Rooms } from './index.js';
+import { Rooms, logger } from './index.js';
 import { ServerEvents } from './shared/index.js';
 import { ServerSocket } from './types.js';
 import { User } from './User.js';
@@ -6,10 +6,6 @@ import { User } from './User.js';
 const bannedIps = new Set<string>();
 
 const activeUsernames = new Set<string>();
-
-export function removeActiveUsername(username: string): void {
-    activeUsernames.delete(username.toLowerCase());
-}
 
 export function addBannedIp(ip: string): void {
     bannedIps.add(ip);
@@ -58,6 +54,14 @@ export async function validateConnection(socket: ServerSocket): Promise<void> {
 
     activeUsernames.add(usernameLower);
 
+    // Connection-scoped cleanup. Rooms remove only their own listeners, so
+    // username release must live OUTSIDE room membership: it survives room
+    // transitions (approval) and still fires if a user ends up seated in no
+    // room at all (e.g. a failed admission rollback).
+    socket.on('disconnect', () => {
+        activeUsernames.delete(usernameLower);
+    });
+
     const isAdmin = Rooms.Admins.isEmpty();
 
     const user = new User(socket, username, isAdmin);
@@ -71,5 +75,5 @@ export async function validateConnection(socket: ServerSocket): Promise<void> {
         await Rooms.WaitingRoom.add(user);
     }
 
-    logApplicationState();
+    logger.logApplicationState();
 }

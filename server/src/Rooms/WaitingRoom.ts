@@ -1,4 +1,4 @@
-import { Rooms } from '../index.js';
+import type { RoomServices } from '../rooms.js';
 import { ServerEvents } from '../shared/index.js';
 import { User } from '../User.js';
 import { Room } from './Room.js';
@@ -6,8 +6,11 @@ import { Room } from './Room.js';
 export class WaitingRoom extends Room {
     private readonly ips = new Set<string>();
 
-    public constructor() {
-        super('waiting-room');
+    private readonly adminsRoomName: string;
+
+    public constructor(services: RoomServices, adminsRoomName: string) {
+        super('waiting-room', services);
+        this.adminsRoomName = adminsRoomName;
     }
 
     public hasIp(ip: string): boolean {
@@ -18,7 +21,7 @@ export class WaitingRoom extends Room {
         this.ips.add(user.ip);
 
         user.socket.broadcast
-            .to(Rooms.Admins.roomName)
+            .to(this.adminsRoomName)
             .emit(ServerEvents.WaitingRoom.Joined, user.toBasic());
     }
 
@@ -26,7 +29,7 @@ export class WaitingRoom extends Room {
         this.ips.delete(user.ip);
 
         user.socket.broadcast
-            .to(Rooms.Admins.roomName)
+            .to(this.adminsRoomName)
             .emit(ServerEvents.WaitingRoom.Left, user.toBasic());
     }
 }

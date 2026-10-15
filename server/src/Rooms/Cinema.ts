@@ -1,4 +1,5 @@
 import { PlaybackClock } from '../playback/PlaybackClock.js';
+import type { RoomServices } from '../rooms.js';
 import { BaseUser } from '../shared/BaseUser.js';
 import {
     ClientEvents,
@@ -26,10 +27,14 @@ export class Cinema extends Room {
      * late joiners (and after the host disconnects) because it is projected
      * from an anchor, not stored frozen.
      */
-    private readonly clock = new PlaybackClock((): number => performance.now());
+    private readonly clock: PlaybackClock;
 
-    public constructor() {
-        super('cinema');
+    public constructor(
+        services: RoomServices,
+        now: () => number = (): number => performance.now(),
+    ) {
+        super('cinema', services);
+        this.clock = new PlaybackClock(now);
     }
 
     /** Current authoritative playback state (also the join snapshot source). */
@@ -80,7 +85,7 @@ export class Cinema extends Room {
         const { socket } = user;
         const admin = user.toBasic();
 
-        socket.on(event, (payload: unknown) => {
+        this.listen(user, event, (payload: unknown) => {
             if (!isPlaybackCommand(payload)) {
                 socket.emit(ServerEvents.Cinema.CommandRejected, 'invalid-command');
                 return;
@@ -156,7 +161,7 @@ export class Cinema extends Room {
     private listenToSelect(user: User): void {
         const { socket } = user;
 
-        socket.on(ClientEvents.Cinema.Select, (payload: unknown) => {
+        this.listen(user, ClientEvents.Cinema.Select, (payload: unknown) => {
             const mediaId =
                 typeof payload === 'string' ? normalizeMediaId(payload) : null;
 

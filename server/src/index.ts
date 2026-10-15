@@ -1,8 +1,14 @@
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { Admins, Cinema, WaitingRoom } from './Rooms/index.js';
+import { createLogger } from './logging.js';
+import { createRooms, type RoomsRegistry } from './rooms.js';
 import { ClientEvents, ServerEvents } from './shared/index.js';
-import { validateConnection } from './validation.js';
+import { addBannedIp, validateConnection } from './validation.js';
+
+// Transitional wiring: the application factory (src/app.ts) replaces this
+// composition in a follow-up commit; until then index.ts still owns startup
+// AND composition, but through the room factory rather than module-level
+// room singletons with imports reaching back into this file.
 
 const PORT = process.env['PORT'] ?? 5_000;
 
@@ -12,31 +18,19 @@ const io = new Server<ClientEvents.All, ServerEvents.All>(server, {
     cors: { origin: '*' },
 });
 
-export const Rooms = {
-    Admins: new Admins(),
-    Cinema: new Cinema(),
-    WaitingRoom: new WaitingRoom(),
-};
-
-let lastApplicationState = '';
-
-export function logApplicationState(): void {
-    const newState = [
-        Rooms.Admins.toString(),
-        Rooms.Cinema.toString(),
-        Rooms.WaitingRoom.toString(),
-    ].join('\n');
-
-    if (lastApplicationState === newState) return;
-
-    lastApplicationState = newState;
-
-    process.stdout.moveCursor(0, -4);
-    process.stdout.clearScreenDown();
-
-    console.log(`=== [${new Date().toLocaleTimeString('en-NZ')}] ===`);
-    console.log(lastApplicationState);
+function renderRooms(rooms: RoomsRegistry): string {
+    return [rooms.Admins, rooms.Cinema, rooms.WaitingRoom]
+        .map((room) => room.toString())
+        .join('\n');
 }
+
+const logger = createLogger(process.stdout, {
+    renderState: (): string => renderRooms(Rooms),
+});
+
+export const Rooms = createRooms({ logger, access: { banIp: addBannedIp } });
+
+export { logger };
 
 io.on('connection', async (socket) => {
     await validateConnection(socket);

@@ -1,26 +1,21 @@
 import { createServer, type Server as HttpServer } from 'node:http';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { Server, type Socket as ServerSocket } from 'socket.io';
 import { io, type Socket as ClientSocket } from 'socket.io-client';
-import { Cinema } from '../../src/Rooms/Cinema.js';
 import { ServerEvents } from '../../src/shared/index.js';
 import { User } from '../../src/User.js';
+import { createTestRooms } from '../helpers/testApp.js';
 
 // Real-socket integration coverage for the cinema playback boundary:
 // hostile payloads must be REJECTED, never thrown, and the authoritative
 // clock must advance for late joiners over the wire.
-
-// Rooms/User transitively import src/index.ts, which starts a real server on
-// a fixed port at module scope; mock that module so importing the room is
-// side-effect free in tests.
-vi.mock('../../src/index.js', () => ({
-    Rooms: { Admins: {}, Cinema: {}, WaitingRoom: {} },
-    logApplicationState: (): undefined => undefined,
-}));
+//
+// Domain modules no longer import src/index.ts (Task 5), so no entry-point
+// mock is needed: rooms come straight from the registry factory.
 
 interface Harness {
     readonly url: string;
-    readonly cinema: Cinema;
+    readonly cinema: ReturnType<typeof createTestRooms>['rooms']['Cinema'];
     close: () => Promise<void>;
 }
 
@@ -35,13 +30,13 @@ const clients = new Set<ClientSocket>();
 async function startHarness(): Promise<Harness> {
     const httpServer: HttpServer = createServer();
     const ioServer = new Server(httpServer, { cors: { origin: '*' } });
-    const cinema = new Cinema();
+    const cinema = createTestRooms().rooms.Cinema;
     let hostAssigned = false;
     ioServer.on('connection', (socket: ServerSocket): void => {
         // Minimal connection wiring: the FIRST connector is the host (admin,
         // matching production role assignment) and everyone after is a plain
         // viewer; all join the cinema directly. The waiting-room/approval
-        // flow belongs to the Task 5 test-app factory.
+        // flow belongs to the application-factory tests.
         hostCounter += 1;
         const isAdmin = !hostAssigned;
         hostAssigned = true;
