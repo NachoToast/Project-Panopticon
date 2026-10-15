@@ -31,9 +31,6 @@ export interface LoggerOptions {
     readonly renderState: () => string;
 }
 
-/** How many lines a state render occupies (header + one per room). */
-const STATE_BLOCK_LINES = 4;
-
 function canRewrite(stream: NodeJS.WriteStream): boolean {
     // Node types declare `isTTY: boolean`, but at runtime piped streams leave
     // it undefined; read through an optional view so the guard stays honest.
@@ -52,6 +49,8 @@ export function createLogger(
     options: LoggerOptions,
 ): Logger {
     let lastState = '';
+    /** Height of the last rendered state block (header + state lines). */
+    let lastStateLines = 0;
 
     const writeLine = (line: string): void => {
         stream.write(`${line}\n`);
@@ -62,15 +61,19 @@ export function createLogger(
             const state = options.renderState();
             if (state === lastState) return;
 
-            lastState = state;
-
-            if (canRewrite(stream)) {
-                // Move back onto the previous state block and clear it so the
-                // new render replaces it in place. Skipped entirely for pipes,
-                // where the same output simply appends sequentially.
-                stream.moveCursor(0, -STATE_BLOCK_LINES);
+            if (lastStateLines > 0 && canRewrite(stream)) {
+                // Move back onto the previous state block and clear it so
+                // the new render replaces it in place. The height is
+                // whatever the PREVIOUS block actually occupied — anything
+                // interleaved since (info/warn/error lines) is wiped with
+                // it. Skipped entirely for pipes and for the first render,
+                // where there is no block to rewrite.
+                stream.moveCursor(0, -lastStateLines);
                 stream.clearScreenDown();
             }
+
+            lastState = state;
+            lastStateLines = state.split('\n').length + 1;
 
             writeLine(`=== [${new Date().toLocaleTimeString('en-NZ')}] ===`);
             writeLine(state);

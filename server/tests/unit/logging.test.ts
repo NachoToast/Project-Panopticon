@@ -79,15 +79,54 @@ describe('createLogger', (): void => {
         expect(fake.moveCursor).not.toHaveBeenCalled();
     });
 
-    it('rewrites in place with cursor controls on a TTY', (): void => {
+    it('writes the first state render without cursor movement on a TTY', (): void => {
         const fake = fakeStream({ tty: true, cursorControls: true });
         const logger = createLogger(fake.stream, renderer(['Admins(1) { host }']));
 
         logger.logApplicationState();
 
+        // Nothing has been rendered yet: moving the cursor up would
+        // erase unrelated output (e.g. the startup banner).
+        expect(fake.moveCursor).not.toHaveBeenCalled();
+        expect(fake.clearScreenDown).not.toHaveBeenCalled();
+        expect(fake.writes.join('')).toContain('Admins(1) { host }');
+    });
+
+    it('erases exactly as many lines as the previous state block occupied', (): void => {
+        const fake = fakeStream({ tty: true, cursorControls: true });
+        const threeRooms =
+            'Admins(1) { host }\nCinema(1) { host }\nWaitingRoom(0) {  }';
+        const logger = createLogger(
+            fake.stream,
+            renderer([threeRooms, 'Admins(2) { host, b }']),
+        );
+
+        logger.logApplicationState(); // first render: nothing to rewrite
+
+        // An info line interleaves between two state renders; the next
+        // rewrite must still move by the STORED height of the previous
+        // state block (header + 3 room lines), not a magic constant.
+        logger.info('an interleaved line');
+        logger.logApplicationState();
+
+        expect(fake.moveCursor).toHaveBeenCalledTimes(1);
         expect(fake.moveCursor).toHaveBeenCalledWith(0, -4);
         expect(fake.clearScreenDown).toHaveBeenCalledOnce();
-        expect(fake.writes.join('')).toContain('Admins(1) { host }');
+        expect(fake.writes.join('')).toContain('Admins(2) { host, b }');
+    });
+
+    it('derives the rewrite height from each rendered block, not a constant', (): void => {
+        const fake = fakeStream({ tty: true, cursorControls: true });
+        const tall = 'a\nb\nc\nd\ne'; // 5 lines + header = 6
+        const short = 'x'; // 1 line + header = 2
+        const logger = createLogger(fake.stream, renderer([tall, short, tall]));
+
+        logger.logApplicationState(); // first render: no rewrite
+        logger.logApplicationState(); // erases the tall block (6 lines)
+        expect(fake.moveCursor).toHaveBeenLastCalledWith(0, -6);
+
+        logger.logApplicationState(); // erases the short block (2 lines)
+        expect(fake.moveCursor).toHaveBeenLastCalledWith(0, -2);
     });
 
     it('skips unchanged state', (): void => {
