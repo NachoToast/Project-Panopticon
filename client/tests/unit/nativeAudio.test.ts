@@ -1,31 +1,46 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const controllerSource: string = readFileSync(
+/**
+ * Why source-level pins remain: movie.ts grabs the DOM at module scope, so a
+ * Node test cannot import it without a DOM simulator, which this suite
+ * forbids. The playback logic itself moved into playback/controller.ts and
+ * is behaviorally covered through the player harness (volume persistence,
+ * admission restore); what is pinned HERE is only what still cannot be
+ * executed in Node — the wiring-level guarantees.
+ */
+
+const controllerSources: string = [
+    readFileSync(fileURLToPath(new URL('../../src/controllers/movie.ts', import.meta.url)), 'utf8'),
+    ...readdirSync(fileURLToPath(new URL('../../src/playback', import.meta.url)))
+        .filter((file) => file.endsWith('.ts'))
+        .map((file) =>
+            readFileSync(fileURLToPath(new URL(`../../src/playback/${file}`, import.meta.url)), 'utf8'),
+        ),
+].join('\n');
+
+/** The whole playback path: wiring + controller + clock + error tables. */
+const WEB_AUDIO_GRAPH = /\b(?:AudioContext|createMediaElementSource|createGain|GainNode)\b/;
+
+const movieWiring: string = readFileSync(
     fileURLToPath(new URL('../../src/controllers/movie.ts', import.meta.url)),
     'utf8',
 );
 
-/**
- * Why source-level pins: movie.ts queries the DOM at module scope (until Task 6
- * restructures the controller), so a Node test cannot import it without a DOM
- * simulator, which this suite forbids. Until then, asserting on the module
- * source is the honest guard: the absence pin below mirrors the task's final
- * grep gate and proves the playback path contains no Web Audio graph, meaning
- * element.volume is the only volume pathway (no hidden loudness multiplier).
- */
-const WEB_AUDIO_GRAPH = /\b(?:AudioContext|createMediaElementSource|createGain|GainNode)\b/;
-
 describe('native audio playback', (): void => {
     it('keeps the playback path free of any Web Audio graph', (): void => {
-        expect(WEB_AUDIO_GRAPH.test(controllerSource)).toBe(false);
+        // element.volume is the only volume pathway (no hidden loudness
+        // multiplier) across the wiring AND the playback modules.
+        expect(WEB_AUDIO_GRAPH.test(controllerSources)).toBe(false);
     });
 
-    it('persists volume changes natively through the safe storage wrapper', (): void => {
-        // Regression pin (already true since the storage adoption): the native
-        // volumechange handler must only persist, never re-route audio.
-        expect(controllerSource).toContain('onvolumechange');
-        expect(controllerSource).toContain('writeStoredString');
+    it('persists volume through the safe storage wrapper at the wiring edge', (): void => {
+        // The wiring-level guarantee: preferences go through safeStorage
+        // (contained failures, StorageUnavailable reporting). The controller
+        // behavior (restore on admission, persist on volumechange) is
+        // covered behaviorally in playerLifecycle.test.ts.
+        expect(movieWiring).toContain('readStoredNumber');
+        expect(movieWiring).toContain('writeStoredString');
     });
 });

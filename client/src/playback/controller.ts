@@ -73,7 +73,12 @@ export interface PlaybackMediaElement {
     readonly duration: number;
     readonly error: PlaybackMediaError | null;
     controls: boolean;
-    hidden: boolean;
+    /**
+     * Visibility. The DOM lib types the reflected attribute as
+     * `string | boolean`; at runtime this is always a boolean for our
+     * assignments.
+     */
+    hidden: boolean | string;
     volume: number;
     currentTime: number;
     play(): Promise<void>;
@@ -198,8 +203,12 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
     const timers: PlaybackTimers =
         deps.timers ??
         {
-            schedule: (handler: () => void, ms: number): unknown => setTimeout(handler, ms),
-            cancel: (handle: unknown): void => clearTimeout(handle as ReturnType<typeof setTimeout>),
+            schedule: (handler: () => void, ms: number): unknown => {
+                return setTimeout(handler, ms);
+            },
+            cancel: (handle: unknown): void => {
+                clearTimeout(handle as ReturnType<typeof setTimeout>);
+            },
         };
     const projection: ProjectionClock = createProjectionClock(now);
     const volume = deps.volume ?? {
