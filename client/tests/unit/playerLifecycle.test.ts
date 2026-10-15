@@ -606,6 +606,113 @@ describe('playback controller: trusted command emission', (): void => {
     });
 });
 
+describe('playback controller: slow loading', (): void => {
+    it('reports SlowLoading once when no usable data arrives in time', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        harness.tick(14_999);
+        expect(harness.activeIssueCodes()).not.toContain(IssueCode.SlowLoading);
+
+        harness.tick(1);
+        expect(harness.issue(IssueCode.SlowLoading)).toBeDefined();
+
+        // Fires once per load: no repeating timer.
+        harness.tick(30_000);
+        expect(harness.issue(IssueCode.SlowLoading)?.occurrences).toBe(1);
+    });
+
+    it('does not report when data arrives within the bound', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        harness.tick(5_000);
+        harness.player.markDataLoaded();
+        harness.tick(20_000);
+
+        expect(harness.activeIssueCodes()).not.toContain(IssueCode.SlowLoading);
+    });
+
+    it('a superseded load cancels the old timer and arms a new one', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+
+        harness.tick(10_000);
+        void harness.controller.retry(); // a fresh load supersedes
+        harness.tick(10_000); // 20s total, 10s into the new load
+        expect(harness.activeIssueCodes()).not.toContain(IssueCode.SlowLoading);
+
+        harness.player.markDataLoaded();
+        harness.player.readyState = 0; // another slow load begins
+        void harness.controller.retry();
+        harness.tick(15_000);
+
+        expect(harness.issue(IssueCode.SlowLoading)).toBeDefined();
+    });
+
+    it('never auto-reloads after reporting slow loading', (): void => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        expect(harness.player.loadCalls).toBe(1);
+
+        harness.tick(45_000);
+
+        expect(harness.activeIssueCodes()).toContain(IssueCode.SlowLoading);
+        expect(harness.player.loadCalls).toBe(1); // recovery stays manual
+    });
+});
+
+describe('playback controller: recovery API', (): void => {
+    it('retry rebuilds the media, resolves the incident, and plays', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        await harness.receivePlayingState({ position: 10, revision: 1 });
+
+        harness.player.failWithError(2); // network incident
+        expect(harness.activeIssueCodes()).toContain(IssueCode.MediaNetwork);
+
+        await harness.controller.retry();
+        harness.player.markMetadata(3_600);
+        harness.player.markDataLoaded();
+        await harness.settle();
+
+        expect(harness.player.loadCalls).toBe(2);
+        expect(harness.activeIssueCodes()).not.toContain(IssueCode.MediaNetwork);
+        expect(harness.player.paused).toBe(false);
+    });
+
+    it('a retry outcome cannot overwrite a newer pause (stale token)', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+        harness.player.deferPlay = true;
+
+        void harness.controller.retry();
+        await harness.receivePausedState({ position: 1, revision: 1 });
+        expect(harness.player.paused).toBe(true);
+
+        harness.player.settleNextPlay(); // the retry's play finally succeeds
+        await harness.settle();
+
+        expect(harness.player.paused).toBe(true);
+    });
+
+    it('startPlayback seeks the viewer back to the projected position', async (): Promise<void> => {
+        const harness = createPlayerHarness({ playError: playRejection('NotAllowedError') });
+        harness.receiveAdmission();
+        harness.player.markMetadata(3_600);
+
+        await harness.receivePlayingState({ position: 100, revision: 1 });
+        expect(harness.player.currentTime).toBe(100);
+
+        await harness.controller.startPlayback();
+
+        expect(harness.player.paused).toBe(false);
+        expect(harness.sent).toEqual([]); // viewer-local only
+    });
+});
+
 describe('playback controller: admission and volume wiring', (): void => {
     it('restores the stored volume and shows the element with controls on admission', (): void => {
         const harness = createPlayerHarness({ initialVolume: 0.4 });

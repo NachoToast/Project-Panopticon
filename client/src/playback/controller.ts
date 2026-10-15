@@ -178,9 +178,29 @@ const DRIFT_THRESHOLD_SECONDS = 5;
 /** Tolerance for applying an EXACT seek (absorbs player rounding). */
 const SEEK_EPSILON_SECONDS = 0.25;
 
+/** readyState at which the first usable frame exists (HAVE_CURRENT_DATA). */
+const HAVE_CURRENT_DATA = 2;
+
+/** Bound on waiting for the first usable frame before a SlowLoading report. */
+const SLOW_LOAD_MS = 15_000;
+
+/** Issue codes a successful data load clears. */
+const MEDIA_ISSUE_CODES: readonly IssueCode[] = [
+    IssueCode.MediaNetwork,
+    IssueCode.MediaDecode,
+    IssueCode.MediaUnusable,
+    IssueCode.SlowLoading,
+];
+
 export function createPlaybackController(deps: PlaybackControllerDeps): PlaybackController {
     const { element, channel, store, media, createElement } = deps;
     const now = deps.now ?? ((): number => performance.now());
+    const timers: PlaybackTimers =
+        deps.timers ??
+        {
+            schedule: (handler: () => void, ms: number): unknown => setTimeout(handler, ms),
+            cancel: (handle: unknown): void => clearTimeout(handle as ReturnType<typeof setTimeout>),
+        };
     const projection: ProjectionClock = createProjectionClock(now);
     const volume = deps.volume ?? {
         initial: (): number => 0.15,
@@ -293,6 +313,46 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         element.pause();
     }
 
+    // --- slow-load bound ---------------------------------------------------------
+
+    let slowLoadHandle: unknown;
+
+    /**
+     * Arms the one-shot bound on the first usable frame. Superseded loads
+     * cancel it via their generation bump; it never re-arms itself, so a
+     * slow load is reported exactly once and never triggers auto-reloads.
+     */
+    function armSlowLoadTimer(): void {
+        if (slowLoadHandle !== undefined) {
+            timers.cancel(slowLoadHandle);
+            slowLoadHandle = undefined;
+        }
+        const generation = loadGeneration;
+        slowLoadHandle = timers.schedule((): void => {
+            slowLoadHandle = undefined;
+            if (generation !== loadGeneration || element.readyState >= HAVE_CURRENT_DATA) {
+                return;
+            }
+            report(IssueCode.SlowLoading);
+        }, SLOW_LOAD_MS);
+    }
+
+    function cancelSlowLoadTimer(): void {
+        if (slowLoadHandle !== undefined) {
+            timers.cancel(slowLoadHandle);
+            slowLoadHandle = undefined;
+        }
+    }
+
+    /** First usable frame: the slow-load bound lifts and media incidents resolve. */
+    function onDataUsable(): void {
+        if (element.readyState < HAVE_CURRENT_DATA) {
+            return;
+        }
+        cancelSlowLoadTimer();
+        resolveIssues(MEDIA_ISSUE_CODES);
+    }
+
     // --- reconciliation ----------------------------------------------------------
 
     /** Clamps a position into [0, duration] when the duration is known. */
@@ -360,11 +420,12 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
      * no fatal error), readmission reuses it — no re-append, no reload. Any
      * other state rebuilds the source children and restarts the load.
      */
-    function ensureMediaLoaded(): void {
+    function ensureMediaLoaded(force = false): void {
         if (media.mediaId === null) {
             return;
         }
         if (
+            !force &&
             loadedMediaId === media.mediaId &&
             element.readyState >= HAVE_METADATA &&
             element.error === null
@@ -377,6 +438,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         opToken += 1;
         loadGeneration += 1;
         deferredSeek = null;
+        armSlowLoadTimer();
 
         const children: (PlaybackSourceChild | PlaybackTrackChild)[] = [
             createElement.createSource(media.source, media.type),
@@ -549,6 +611,8 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         ['seeked', onNativeSeeked],
         ['loadedmetadata', onLoadedMetadata],
         ['volumechange', onVolumeChange],
+        ['loadeddata', onDataUsable],
+        ['canplay', onDataUsable],
         // Capture phase: child <source> errors never bubble to the element.
         ['error', (event): void => {
             onMediaError(event);
@@ -566,6 +630,17 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
     }
 
     // --- public surface -------------------------------------------------------------
+
+    /** Shared gesture-entry play path for startPlayback() and retry(). */
+    function startPlaybackInternal(): Promise<void> {
+        if (media.mediaId === null) {
+            report(IssueCode.InvalidConfiguration);
+            return Promise.resolve();
+        }
+        playInFlight = false;
+        reconcile(false);
+        return Promise.resolve();
+    }
 
     function handleAdmission(snapshot: unknown): void {
         element.hidden = false;
@@ -631,19 +706,18 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
             }
         },
 
-        startPlayback: (): Promise<void> => {
+        startPlayback: (): Promise<void> => startPlaybackInternal(),
+
+        retry: async (): Promise<void> => {
             if (media.mediaId === null) {
                 report(IssueCode.InvalidConfiguration);
-                return Promise.resolve();
+                return;
             }
-            playInFlight = false;
-            attemptPlay();
-            return Promise.resolve();
-        },
-
-        retry: (): Promise<void> => {
-            // Media reload arrives with the slow-load/recovery slice.
-            return Promise.resolve();
+            // A retry is a deliberate fresh load of the CURRENT media: it
+            // cancels the slow-load bound, rebuilds the source children,
+            // and attempts playback again (usually from a trusted gesture).
+            ensureMediaLoaded(true);
+            await startPlaybackInternal();
         },
 
         reload: (): void => {
@@ -652,6 +726,7 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
 
         dispose: (): void => {
             opToken += 1;
+            cancelSlowLoadTimer();
             for (const [type, listener, capture] of elementListeners) {
                 element.removeEventListener(type, listener, capture === true ? { capture: true } : undefined);
             }
