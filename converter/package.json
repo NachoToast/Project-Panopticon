@@ -9,9 +9,7 @@
         "check-all": "bun run typecheck"
     },
     "devDependencies": {
-        "@types/bun": "latest"
-    },
-    "peerDependencies": {
-        "typescript": "^6.0.3"
+        "@types/bun": "latest",
+        "typescript": "6.0.3"
     }
 }
