@@ -655,6 +655,8 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         element.hidden = false;
         element.controls = true;
         element.volume = volume.initial();
+        // Admission means the connection (and the room) is alive again.
+        resolveIssues([IssueCode.ConnectionLost]);
         ensureMediaLoaded();
 
         if (isAdmin && media.mediaId !== null) {

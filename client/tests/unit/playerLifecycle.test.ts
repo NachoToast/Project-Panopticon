@@ -506,6 +506,21 @@ describe('playback controller: disconnect lifecycle', (): void => {
 
         expect(harness.player.currentTime).toBe(0);
     });
+
+    it('resolves ConnectionLost once readmitted after a reconnect', async (): Promise<void> => {
+        const harness = createPlayerHarness();
+        harness.receiveAdmission();
+        await harness.receivePlayingState({ position: 0, revision: 1 });
+
+        harness.disconnect('transport close');
+        expect(harness.activeIssueCodes()).toContain(IssueCode.ConnectionLost);
+
+        harness.reconnect();
+        harness.receiveAccepted(false);
+        harness.receiveAdmission();
+
+        expect(harness.activeIssueCodes()).not.toContain(IssueCode.ConnectionLost);
+    });
 });
 
 describe('playback controller: trusted command emission', (): void => {
