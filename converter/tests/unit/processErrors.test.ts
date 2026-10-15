@@ -1,4 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import type { TranscodeProgress } from "../../src/doTranscode";
+import {
+    collectInputFiles,
+    createFileProgress,
+    formatProgressLine,
+    summarizeRun,
+} from "../../src/main";
 import {
     parseFpsRate,
     parseProbeOutput,
@@ -222,5 +232,115 @@ describe("verifyOutputProbe", (): void => {
         };
 
         expect(verifyOutputProbe(surround, { expectAudio: true })).toMatch(/stereo|channels/i);
+    });
+});
+
+describe("formatProgressLine", (): void => {
+    const halfway: TranscodeProgress = {
+        frame: 150,
+        outTimeSeconds: 5,
+        fps: 30,
+        speed: "1.5x",
+        done: false,
+    };
+
+    it("renders time, percent, and speed when duration is known", (): void => {
+        const line = formatProgressLine("clip.mkv", halfway, 10);
+
+        expect(line).toContain("clip.mkv");
+        expect(line).toContain("50%");
+        expect(line).toContain("1.5x");
+    });
+
+    it("omits the percent when duration is unknown", (): void => {
+        const line = formatProgressLine("clip.mkv", halfway, null);
+
+        expect(line).not.toContain("%");
+    });
+});
+
+// RED case 4: non-TTY progress must never throw (no moveCursor/clearLine —
+// those throw on pipes) and must stay quiet: one line per file completion is
+// all a piped run gets.
+describe("createFileProgress", (): void => {
+    const sample: TranscodeProgress = {
+        frame: 1,
+        outTimeSeconds: 1,
+        fps: 30,
+        speed: "2x",
+        done: false,
+    };
+
+    it("writes nothing when the output is not a TTY", (): void => {
+        const writes: string[] = [];
+        const display = createFileProgress("clip.mkv", {
+            isTty: false,
+            write: (text: string) => writes.push(text),
+        });
+
+        expect(() => {
+            display.update(sample);
+            display.end();
+        }).not.toThrow();
+
+        expect(writes).toEqual([]);
+    });
+
+    it("overwrites in place with \\r when on a TTY", (): void => {
+        const writes: string[] = [];
+        const display = createFileProgress("clip.mkv", {
+            isTty: true,
+            write: (text: string) => writes.push(text),
+        });
+
+        display.update({ ...sample, outTimeSeconds: 1 });
+        display.update({ ...sample, outTimeSeconds: 100 });
+        display.update({ ...sample, outTimeSeconds: 50 }); // shorter line pads over leftovers
+        display.end();
+
+        expect(writes.slice(0, 3).every((text: string) => text.startsWith("\r"))).toBe(true);
+        expect(writes[2]!.length).toBeGreaterThanOrEqual(writes[1]!.length);
+        expect(writes[3]).toBe("\n");
+    });
+});
+
+describe("summarizeRun", (): void => {
+    it("reports full success with exit code 0", (): void => {
+        const summary = summarizeRun(["/a/x.mkv", "/a/y.mkv"], []);
+
+        expect(summary.line).toContain("2 converted");
+        expect(summary.line).toContain("0 failed");
+        expect(summary.exitCode).toBe(0);
+    });
+
+    it("names the failures and exits nonzero", (): void => {
+        const summary = summarizeRun(["/a/x.mkv"], [
+            { file: "/a/broken.mkv", error: new Error("boom") },
+        ]);
+
+        expect(summary.line).toContain("1 failed");
+        expect(summary.line).toContain("broken.mkv");
+        expect(summary.exitCode).toBe(1);
+    });
+});
+
+describe("collectInputFiles", (): void => {
+    it("collects matching files and ignores directories and other extensions", (): void => {
+        const dir = mkdtempSync(join(tmpdir(), "panopticon-collect-"));
+
+        try {
+            writeFileSync(join(dir, "a.mkv"), "x");
+            writeFileSync(join(dir, "b.mkv"), "x");
+            writeFileSync(join(dir, "c.mp4"), "x");
+            mkdirSync(join(dir, "d.mkv"));
+
+            expect(collectInputFiles(dir, "mkv").map((file: string) => basename(file)).sort()).toEqual([
+                "a.mkv",
+                "b.mkv",
+            ]);
+            expect(() => collectInputFiles(dir, "avi")).toThrow(/No avi files/);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
