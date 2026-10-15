@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import settings from '../settings.json';
 import { Cinema, EntryCard, Movie, User, WaitingRoom } from './controllers';
+import { summarizeEventArgs } from './diagnostics/snapshot';
 import { ClientEvents, ServerEvents } from './shared';
 import './styles';
 import {
@@ -19,7 +20,12 @@ export const socket: Socket<ServerEvents.All, ClientEvents.All> = io(
     { autoConnect: false },
 );
 
-async function handleLoad(): Promise<void> {
+/**
+ * Initializes the application. Called once by the bootstrap entry after the
+ * page has loaded; kept explicit so a dynamic import cannot miss the load
+ * event (bootstrap owns that wait).
+ */
+export async function initApp(): Promise<void> {
     makeBackgroundCanvas();
 
     Cinema.addListeners();
@@ -29,7 +35,9 @@ async function handleLoad(): Promise<void> {
     WaitingRoom.addListeners();
 
     socket.onAny((eventName: string, ...args: unknown[]) => {
-        console.log(`%c${eventName}`, 'color: gray', ...args);
+        // Allowlisted summary only: event name plus argument kinds. Raw
+        // payloads (user lists, tokens, URLs) are never logged or persisted.
+        console.debug(`%c${eventName}`, 'color: gray', summarizeEventArgs(args));
     });
 
     EntryCard.show({
@@ -50,5 +58,3 @@ async function handleLoad(): Promise<void> {
 
     socket.connect();
 }
-
-window.addEventListener('load', () => void handleLoad(), { once: true });
