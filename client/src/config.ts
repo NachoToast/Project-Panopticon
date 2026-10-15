@@ -44,8 +44,33 @@ function readNonBlankString(value: unknown): string | null {
     return trimmed === '' ? null : trimmed;
 }
 
+/** Sentinel marking a property read that threw (hostile getter or proxy). */
+const UNREADABLE = Symbol('unreadable');
+
+/**
+ * Reads one property defensively: a throwing getter or proxy trap collapses
+ * to the UNREADABLE sentinel instead of escaping — the same hostile-property
+ * standard the diagnostics layer applies (see the guards in snapshot.ts).
+ */
+function readField(record: Record<string, unknown>, key: string): unknown {
+    try {
+        return record[key];
+    } catch {
+        return UNREADABLE;
+    }
+}
+
+/** Reads one required non-blank string field; unreadable counts as invalid. */
+function readRequiredField(record: Record<string, unknown>, key: string): string | null {
+    const raw = readField(record, key);
+    return raw === UNREADABLE ? null : readNonBlankString(raw);
+}
+
 /** Validates the optional subtitles list; absent means none, invalid means null. */
 function validateSubtitles(value: unknown): readonly SubtitleSettings[] | null {
+    if (value === UNREADABLE) {
+        return null;
+    }
     if (value === undefined) {
         return [];
     }
@@ -58,9 +83,9 @@ function validateSubtitles(value: unknown): readonly SubtitleSettings[] | null {
         if (record === null) {
             return null;
         }
-        const label = readNonBlankString(record['label']);
-        const srclang = readNonBlankString(record['srclang']);
-        const file = readNonBlankString(record['file']);
+        const label = readRequiredField(record, 'label');
+        const srclang = readRequiredField(record, 'srclang');
+        const file = readRequiredField(record, 'file');
         if (label === null || srclang === null || file === null) {
             return null;
         }
@@ -78,17 +103,17 @@ function validateSubtitles(value: unknown): readonly SubtitleSettings[] | null {
 export function validateMovieSettings(raw: unknown): SettingsValidation {
     const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
 
-    const file = readNonBlankString(record['file']);
+    const file = readRequiredField(record, 'file');
     if (file === null) {
         return { settings: null, problem: 'file' };
     }
 
-    const type = readNonBlankString(record['type']);
+    const type = readRequiredField(record, 'type');
     if (type === null) {
         return { settings: null, problem: 'type' };
     }
 
-    const subtitles = validateSubtitles(record['subtitles']);
+    const subtitles = validateSubtitles(readField(record, 'subtitles'));
     if (subtitles === null) {
         return { settings: null, problem: 'subtitles' };
     }
@@ -99,7 +124,7 @@ export function validateMovieSettings(raw: unknown): SettingsValidation {
 const validated: SettingsValidation = validateMovieSettings(settings);
 
 /** Validated movie settings; null when settings.json is unusable. */
-export const movieSettings: MovieSettings | null = validated.settings;
+const movieSettings: MovieSettings | null = validated.settings;
 
 /** Which part of settings.json is unusable; null when settings are valid. */
 export const settingsProblem: SettingsProblem | null = validated.problem;
@@ -111,7 +136,7 @@ export const MOVIE_TYPE: string = movieSettings === null ? '' : movieSettings.ty
 export const SUBTITLES: readonly SubtitleSettings[] = movieSettings === null ? [] : movieSettings.subtitles;
 
 /** The port the room server always listens on. */
-export const SERVER_PORT = 5000;
+const SERVER_PORT = 5000;
 
 /** The subset of Location that socket discovery looks at. */
 export interface SocketLocationLike {
@@ -119,10 +144,10 @@ export interface SocketLocationLike {
     readonly protocol: string;
     /** Page hostname, without brackets for IPv6 in some engines, with them in others. */
     readonly hostname: string;
-    /** Deliberately ignored: the server port is always 5000 unless overridden. */
-    readonly port: string;
-    /** Deliberately ignored: assembled from hostname instead, so IPv6 stays valid. */
-    readonly host: string;
+    /** Deliberately ignored (optional for honesty): the server port is always 5000 unless overridden. */
+    readonly port?: string;
+    /** Deliberately ignored (optional for honesty): assembled from hostname instead, so IPv6 stays valid. */
+    readonly host?: string;
 }
 
 /** Brackets a bare IPv6 literal; leaves already-bracketed or named hosts alone. */

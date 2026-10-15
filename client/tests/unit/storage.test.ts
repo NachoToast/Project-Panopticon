@@ -17,14 +17,6 @@ class FakeStorage {
     public setItem(key: string, value: string): void {
         this.entries.set(key, value);
     }
-
-    public removeItem(key: string): void {
-        this.entries.delete(key);
-    }
-
-    public clear(): void {
-        this.entries.clear();
-    }
 }
 
 /** Storage whose item access fails the way blocked or quota-limited browsers do. */
@@ -33,6 +25,13 @@ class ThrowingStorage extends FakeStorage {
         throw new Error('SecurityError: The operation is insecure.');
     }
 
+    public override setItem(): void {
+        throw new Error('QuotaExceededError: The quota has been exceeded.');
+    }
+}
+
+/** Storage whose writes fail while reads keep serving older values (quota/private mode). */
+class QuotaExceededStorage extends FakeStorage {
     public override setItem(): void {
         throw new Error('QuotaExceededError: The quota has been exceeded.');
     }
@@ -134,6 +133,20 @@ describe('readStoredString', (): void => {
 
         expect(storage.writeStoredString('volume', '0.4')).toBe(false);
         expect(storage.readStoredString('volume')).toBe('0.4');
+    });
+
+    it('prefers the failed-write fallback over the stale stored value', (): void => {
+        // Canonical quota/private-mode failure: getItem still serves the old
+        // '0.5' while setItem throws, so real storage is stale once the '0.6'
+        // write fails. The freshest value (the failed write) must win.
+        const fake = new QuotaExceededStorage();
+        // Seed through the base implementation; the override exists to throw.
+        FakeStorage.prototype.setItem.call(fake, 'volume', '0.5');
+        vi.stubGlobal('localStorage', fake);
+        const storage = createSafeStorage(createIssueStore());
+
+        expect(storage.writeStoredString('volume', '0.6')).toBe(false);
+        expect(storage.readStoredString('volume')).toBe('0.6');
     });
 });
 

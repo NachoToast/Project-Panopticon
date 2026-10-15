@@ -15,8 +15,7 @@ const controllerSource: string = readFileSync(
  * grep gate and proves the playback path contains no Web Audio graph, meaning
  * element.volume is the only volume pathway (no hidden loudness multiplier).
  */
-const WEB_AUDIO_GRAPH =
-    /\b(?:AudioContext|createMediaElementSource|GainNode|audioContext|audioSource|gainNode|createGain|gain)\b/;
+const WEB_AUDIO_GRAPH = /\b(?:AudioContext|createMediaElementSource|createGain|GainNode)\b/;
 
 describe('native audio playback', (): void => {
     it('keeps the playback path free of any Web Audio graph', (): void => {

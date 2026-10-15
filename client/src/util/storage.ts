@@ -60,6 +60,14 @@ export function createSafeStorage(reporter: StorageIssueReporter = issueStore): 
     }
 
     function readStoredString(key: string): string | null {
+        // A pending failed write is the freshest value for this key: presence
+        // in the map means the last write could not reach storage, so real
+        // storage (when still readable at all) holds a stale value that must
+        // not win. Consult the map before touching storage.
+        const pending = failedWrites.get(key);
+        if (pending !== undefined) {
+            return pending;
+        }
         let stored: string | null = null;
         const storage = safeGetStorage();
         if (storage === null) {
@@ -71,10 +79,7 @@ export function createSafeStorage(reporter: StorageIssueReporter = issueStore): 
                 reportStorageIssue();
             }
         }
-        if (stored !== null) {
-            return stored;
-        }
-        return failedWrites.get(key) ?? null;
+        return stored;
     }
 
     function writeStoredString(key: string, value: string): boolean {
@@ -99,9 +104,9 @@ export function createSafeStorage(reporter: StorageIssueReporter = issueStore): 
             return options.fallback;
         }
         const value = Number(raw.trim());
-        // NaN covers malformed text; the finite and range checks cover
-        // Infinity and hand-edited values.
-        if (Number.isNaN(value) || !Number.isFinite(value) || value < options.minimum || value > options.maximum) {
+        // The finite check covers NaN (malformed text) and Infinity; the
+        // range checks cover hand-edited values.
+        if (!Number.isFinite(value) || value < options.minimum || value > options.maximum) {
             return options.fallback;
         }
         return value;

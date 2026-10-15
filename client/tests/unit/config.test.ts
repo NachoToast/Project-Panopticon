@@ -81,6 +81,54 @@ describe('validateMovieSettings', (): void => {
         expect(problem === null || ['file', 'type', 'subtitles'].includes(problem)).toBe(true);
         expect(JSON.stringify(result)).not.toContain('secret-movie.mp4');
     });
+
+    it('collapses a throwing getter on any field to that field problem token', (): void => {
+        // Hostile-property standard (see snapshot.ts): reading a field must
+        // never let an exception escape; it collapses to the problem token.
+        const hostileFile = {
+            get file(): never {
+                throw new Error('hostile getter');
+            },
+            type: 'video/mp4',
+        };
+        const hostileType = {
+            file: 'movie.mp4',
+            get type(): never {
+                throw new Error('hostile getter');
+            },
+        };
+        const hostileSubtitles = {
+            file: 'movie.mp4',
+            type: 'video/mp4',
+            get subtitles(): never {
+                throw new Error('hostile getter');
+            },
+        };
+
+        expect(() => validateMovieSettings(hostileFile)).not.toThrow();
+        expect(validateMovieSettings(hostileFile).problem).toBe('file');
+        expect(validateMovieSettings(hostileType).problem).toBe('type');
+        expect(validateMovieSettings(hostileSubtitles).problem).toBe('subtitles');
+    });
+
+    it('collapses a throwing getter on a subtitle entry field to the subtitles token', (): void => {
+        const result = validateMovieSettings({
+            file: 'movie.mp4',
+            type: 'video/mp4',
+            subtitles: [
+                {
+                    get label(): never {
+                        throw new Error('hostile getter');
+                    },
+                    srclang: 'en',
+                    file: 'e.vtt',
+                },
+            ],
+        });
+
+        expect(result.settings).toBeNull();
+        expect(result.problem).toBe('subtitles');
+    });
 });
 
 describe('resolveSocketUrl', (): void => {
@@ -119,6 +167,11 @@ describe('socket URL override (?server=)', (): void => {
         expect(resolveSocketUrl(locationLike('http:', 'localhost', '1730'), 'wss://example.com:8443/socket.io?q=1')).toBe(
             'wss://example.com:8443',
         );
+    });
+
+    it('drops credentials from the override URL', (): void => {
+        const page = locationLike('https:', 'movie.example', '');
+        expect(resolveSocketUrl(page, 'ws://user:secret@10.0.0.5:6000')).toBe('ws://10.0.0.5:6000');
     });
 
     it.each([
@@ -165,11 +218,10 @@ describe('main socket wiring', (): void => {
     it('builds the socket URL through resolveSocketUrl with the ?server= override', (): void => {
         // Source-level pin: main.ts cannot be imported in Node (it pulls in
         // DOM-grabbing controllers), so the wiring is asserted on source.
+        // Positive pins only: the config behavior tests above cover URL
+        // derivation, so banning unrelated string operations here would just
+        // false-positive on future main.ts edits.
         expect(mainSource).toContain('resolveSocketUrl(');
         expect(mainSource).toContain('readSocketOverride(');
-    });
-
-    it('no longer string-replaces the page host to build the URL', (): void => {
-        expect(mainSource).not.toContain('.replace(');
     });
 });
