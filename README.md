@@ -116,6 +116,26 @@ behavior — `vite preview` is not used in production because it mishandles
 range requests and falls back to `index.html` for missing files). It listens
 on port 1730; override with `PORT`/`HOST`.
 
+Known, deliberate serving gaps (details in
+[docs/playback-troubleshooting.md](docs/playback-troubleshooting.md)):
+
+- No conditional revalidation — `Last-Modified` is decorative, media
+  re-downloads on reuse (no `304` for `If-Modified-Since`).
+- Multi-range requests are truncated to the first range (browsers never
+  send multi-range for `<video>` playback).
+
+Operational notes:
+
+- **Volume is what it says**: the player applies the stored volume
+  directly — it now sounds exactly as set, with no hidden boost.
+- **Deploy client and server together**: the cinema wire protocol
+  (`client/src/shared/` ↔ `server/src/shared/`) changes lockstep; a
+  mixed-version room can misbehave, so ship both sides in one deploy.
+- **One distinct media URL per movie**: every viewer must load the same
+  file for sync to mean anything, and the room identifies the movie by its
+  media URL — re-using a URL for different content breaks mismatch
+  detection.
+
 ### Converter
 
 ```sh
@@ -153,17 +173,52 @@ pnpm --dir server run test
 cd converter && bun run test && bun run test:integration
 ```
 
-Browser tests run Playwright against a real browser. `test:browser` pins chromium for now — to cover the rest, install the other engines (`pnpm --dir client exec playwright install firefox webkit`) and then run `pnpm --dir client exec playwright test` without the project pin:
+The client vitest run also includes an HTTP contract suite that boots the
+production static server (`serve.mjs`) over a real socket and pins its
+range/404/header behavior (`client/tests/http/mediaServing.test.ts`).
+
+Browser tests run Playwright against real engines — chromium, firefox, and
+webkit, one project each. Engine-specific launch options live in one place
+(`client/tests/browser/engineLaunch.ts`); `test:browser` runs the whole
+matrix:
 
 ```sh
 pnpm --dir client run test:browser
 ```
 
-Browser tests need three tiny generated video fixtures (the output is gitignored), so bootstrap them once after cloning:
+The browser suite needs two one-time bootstraps after cloning:
 
 ```sh
+# generates the tiny H.264/AAC fixture clips under client/tests/fixtures/public/
+# (gitignored; requires ffmpeg)
 node client/tests/scripts/generate-media.mjs
+
+# downloads the three Playwright browser engines
+pnpm --dir client exec playwright install chromium firefox webkit
 ```
+
+Engine coverage honesty: chromium and firefox decode the production-shaped
+H.264/AAC fixtures and run the full playback suite. Playwright's bundled
+WebKit is where coverage is honestly partial, and the suite probes each
+engine's real capabilities once per run instead of assuming:
+
+- **Decode**: Playwright's macOS WebKit build has no H.264/AAC decoders
+  (it stalls at `HAVE_METADATA` forever, even though `canPlayType`
+  answers "probably"); Linux WebKit decodes fine through system GStreamer
+  codecs. Decode-dependent tests run where decoding works and skip with
+  a documented reason where it does not.
+- **Seek survival**: WebKit's media clock stalls permanently after
+  seeking a playing element (verified on Linux WebKit 26.6), so the two
+  seek-choreography tests skip on WebKit and run on chromium/firefox.
+
+Real-Safari codec coverage is deliberately left to the manual device
+matrix in
+[docs/playback-troubleshooting.md](docs/playback-troubleshooting.md).
+
+CI (GitHub Actions, `.github/workflows/checks.yml`) runs the same gates on
+every push and pull request: client/server typecheck+lint+tests+builds,
+the converter suite including its real-ffmpeg integration tests, and the
+three-engine browser matrix on Linux.
 
 ### Formatting
 
