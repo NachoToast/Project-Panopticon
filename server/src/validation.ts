@@ -1,25 +1,60 @@
-import { Rooms, logger } from './index.js';
+import type { Logger } from './logging.js';
+import type { AccessControl, RoomsRegistry } from './rooms.js';
 import { ServerEvents } from './shared/index.js';
 import { ServerSocket } from './types.js';
 import { User } from './User.js';
 
-const bannedIps = new Set<string>();
+/**
+ * Per-application admission state: banned ips and active usernames.
+ *
+ * This used to be module-level mutable state shared by every server (and
+ * test) in the process; it now belongs to a createApplication() instance.
+ */
+export class AdmissionState implements AccessControl {
+    private readonly bannedIps = new Set<string>();
 
-const activeUsernames = new Set<string>();
+    private readonly activeUsernames = new Set<string>();
 
-export function addBannedIp(ip: string): void {
-    bannedIps.add(ip);
+    public isBanned(ip: string): boolean {
+        return this.bannedIps.has(ip);
+    }
+
+    public banIp(ip: string): void {
+        this.bannedIps.add(ip);
+    }
+
+    public isUsernameActive(usernameLower: string): boolean {
+        return this.activeUsernames.has(usernameLower);
+    }
+
+    public reserveUsername(usernameLower: string): void {
+        this.activeUsernames.add(usernameLower);
+    }
+
+    public releaseUsername(usernameLower: string): void {
+        this.activeUsernames.delete(usernameLower);
+    }
 }
 
-export async function validateConnection(socket: ServerSocket): Promise<void> {
+export interface AdmissionServices {
+    readonly rooms: RoomsRegistry;
+    readonly admission: AdmissionState;
+    readonly logger: Logger;
+}
+
+export async function validateConnection(
+    socket: ServerSocket,
+    services: AdmissionServices,
+): Promise<void> {
+    const { rooms, admission, logger } = services;
     const ip = socket.handshake.address;
 
-    if (bannedIps.has(ip)) {
+    if (admission.isBanned(ip)) {
         socket.disconnect();
         return;
     }
 
-    if (Rooms.WaitingRoom.hasIp(ip)) {
+    if (rooms.WaitingRoom.hasIp(ip)) {
         socket.emit(
             ServerEvents.Connection.Rejected,
             'Already in waiting room',
@@ -46,33 +81,45 @@ export async function validateConnection(socket: ServerSocket): Promise<void> {
 
     const usernameLower = username.toLowerCase();
 
-    if (activeUsernames.has(usernameLower)) {
+    if (admission.isUsernameActive(usernameLower)) {
         socket.emit(ServerEvents.Connection.Rejected, 'Username taken');
         socket.disconnect();
         return;
     }
 
-    activeUsernames.add(usernameLower);
+    admission.reserveUsername(usernameLower);
 
     // Connection-scoped cleanup. Rooms remove only their own listeners, so
     // username release must live OUTSIDE room membership: it survives room
     // transitions (approval) and still fires if a user ends up seated in no
     // room at all (e.g. a failed admission rollback).
     socket.on('disconnect', () => {
-        activeUsernames.delete(usernameLower);
+        admission.releaseUsername(usernameLower);
     });
 
-    const isAdmin = Rooms.Admins.isEmpty();
+    // Host reservation: isEmpty() and the synchronous membership claim in
+    // Admins.add() run with no await between them, so two concurrent first
+    // connections can never both reserve the host seat (locked by test).
+    const isAdmin = rooms.Admins.isEmpty();
 
     const user = new User(socket, username, isAdmin);
 
     socket.emit(ServerEvents.Connection.Accepted, isAdmin);
 
-    if (isAdmin) {
-        await Rooms.Admins.add(user);
-        await Rooms.Cinema.add(user);
-    } else {
-        await Rooms.WaitingRoom.add(user);
+    try {
+        if (isAdmin) {
+            await rooms.Admins.add(user);
+            await rooms.Cinema.add(user);
+        } else {
+            await rooms.WaitingRoom.add(user);
+        }
+    } catch (error) {
+        // A failed room join already rolled the membership back; refuse the
+        // connection. The disconnect listener above releases the username.
+        logger.error('room join failed during admission', username, error);
+        socket.emit(ServerEvents.Connection.Rejected, 'Admission failed');
+        socket.disconnect();
+        return;
     }
 
     logger.logApplicationState();
