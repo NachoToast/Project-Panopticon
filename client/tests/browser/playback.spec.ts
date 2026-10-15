@@ -26,39 +26,94 @@ const FIXTURE_DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'fi
 const MEDIA_FAILURE_CODES = ['media-network', 'media-decode', 'media-unusable'] as const;
 
 /**
- * Engine decode probe (cached per engine): loads the fixture media in a
- * bare muted <video> and waits, event-driven, for the first usable data
- * or a load error (an 8s bound only guards a dead pipeline).
+ * Engine capability probes (cached per engine): Playwright engine builds
+ * differ in what their media pipelines can actually do, and the suite
+ * refuses to fake coverage where an engine cannot follow.
  *
- * Why this exists: Playwright's bundled WebKit on macOS has no H.264/AAC
- * decoders — canPlayType answers "probably", but the pipeline stalls at
- * HAVE_METADATA with the fetch suspended forever (verified on WebKit 26.6
- * against both the vite dev server and a plain static server; VP8/VP9 WebM
- * twins stall the same way, so there is no codec to switch to). Linux
- * WebKit instead uses system GStreamer codecs (playwright install-deps
- * installs gstreamer1.0-libav), where decoding works. Chromium and
- * Firefox decode H.264/AAC on all platforms.
+ * - decode: loads the fixture media in a bare muted <video> and waits,
+ *   event-driven, for the first usable data or a load error (an 8s bound
+ *   only guards a dead pipeline).
+ * - seek survival: plays the clip, seeks back to 0, and waits for the
+ *   clock to advance again. Playwright's WebKit stalls forever after a
+ *   seek on a playing element (verified on Linux WebKit 26.6 — the clock
+ *   freezes near the seek target while the fetcher sits idle), so
+ *   seek-choreography tests skip there.
  *
- * Tests that need real playback depend on the `decodableMedia` fixture
- * and are skipped (with this reason) wherever the engine cannot decode;
- * they run everywhere else. Decode-independent tests (issue
- * classification of a 404, the trusted-events probe) still run on every
- * engine. Real-Safari codec coverage stays on the manual device matrix —
- * see docs/playback-troubleshooting.md.
+ * Why decode probing exists: Playwright's bundled WebKit on macOS has no
+ * H.264/AAC decoders — canPlayType answers "probably", but the pipeline
+ * stalls at HAVE_METADATA with the fetch suspended forever (verified on
+ * WebKit 26.6 against both the vite dev server and a plain static server;
+ * VP8/VP9 WebM twins stall the same way, so there is no codec to switch
+ * to). Linux WebKit instead uses system GStreamer codecs
+ * (gstreamer1.0-libav via playwright install-deps), where decoding works.
+ * Chromium and Firefox decode H.264/AAC on all platforms.
+ *
+ * Tests that need real playback request `decodableMedia`; tests whose
+ * choreography seeks a playing element request `seekableMedia`. Both skip
+ * with a documented reason wherever the engine cannot follow; they run
+ * everywhere else. Decode-independent tests (issue classification of a
+ * 404, the trusted-events probe) run on every engine. Real-Safari codec
+ * coverage stays on the manual device matrix — see
+ * docs/playback-troubleshooting.md.
  */
 const DECODE_SKIP_REASON =
     'this engine cannot decode the H.264/AAC fixtures (Playwright WebKit/macOS stalls at HAVE_METADATA) — engine playback coverage is skipped here and runs on engines that decode; see docs/playback-troubleshooting.md';
 
-async function probeEngineDecoding(browser: Browser): Promise<boolean> {
+const SEEK_SKIP_REASON =
+    'this engine stalls after seeking a playing element (Playwright WebKit) — seek-choreography coverage is skipped here and runs on engines that survive seeks; see docs/playback-troubleshooting.md';
+
+interface EngineCapabilities {
+    readonly decodes: boolean;
+    readonly seeks: boolean;
+}
+
+/** Plays the fixture muted+looping; resolves when the clock passes 0.3s. */
+async function waitForClockAdvance(page: Page): Promise<boolean> {
+    return page.evaluate(async (): Promise<boolean> => {
+        const video = document.querySelector('#capability-probe');
+        if (!(video instanceof HTMLVideoElement)) {
+            return false;
+        }
+        return await new Promise<boolean>((resolve: (value: boolean) => void): void => {
+            const bound = window.setTimeout((): void => {
+                resolve(video.currentTime > 0.3);
+            }, 8_000);
+            video.addEventListener('timeupdate', (): void => {
+                if (video.currentTime > 0.3) {
+                    window.clearTimeout(bound);
+                    resolve(true);
+                }
+            });
+        });
+    });
+}
+
+async function probeEngineCapabilities(browser: Browser): Promise<EngineCapabilities> {
     const context = await browser.newContext();
     const page = await context.newPage();
     try {
         await page.goto('/');
-        return await page.evaluate(async (): Promise<boolean> => {
+        // NOTE: query by id — the app page has its own #movie video element.
+        await page.evaluate((): void => {
             const video = document.createElement('video');
+            video.id = 'capability-probe';
             video.muted = true;
+            video.loop = true;
             video.preload = 'auto';
             video.src = '/data/red.mp4';
+            document.body.appendChild(video);
+            void video.play();
+        });
+
+        // Decode: first usable data must arrive.
+        const decodes = await page.evaluate(async (): Promise<boolean> => {
+            const video = document.querySelector('#capability-probe');
+            if (!(video instanceof HTMLVideoElement)) {
+                return false;
+            }
+            if (video.readyState >= 3) {
+                return true;
+            }
             return await new Promise<boolean>((resolve: (value: boolean) => void): void => {
                 const bound = window.setTimeout((): void => {
                     resolve(false);
@@ -71,18 +126,40 @@ async function probeEngineDecoding(browser: Browser): Promise<boolean> {
                     window.clearTimeout(bound);
                     resolve(false);
                 });
-                video.load();
             });
         });
+        if (!decodes) {
+            return { decodes: false, seeks: false };
+        }
+
+        // Seek survival: rewind a playing element and require the clock
+        // to advance again past the same mark.
+        const seeks = (await waitForClockAdvance(page))
+            ? await page
+                  .evaluate((): void => {
+                      const video = document.querySelector('#capability-probe');
+                      if (video instanceof HTMLVideoElement) {
+                          video.currentTime = 0;
+                      }
+                  })
+                  .then((): Promise<boolean> => waitForClockAdvance(page))
+                  .catch((): boolean => false)
+            : false;
+        return { decodes, seeks };
     } finally {
         await context.close();
     }
 }
 
 /** Cached probe results per engine (workers run sequentially). */
-const decodeProbeCache = new Map<string, Promise<boolean>>();
+const capabilityProbeCache = new Map<string, Promise<EngineCapabilities>>();
 
-const test = base.extend<{ room: RoomServer; roomBrowser: Browser; decodableMedia: null }>({
+const test = base.extend<{
+    room: RoomServer;
+    roomBrowser: Browser;
+    decodableMedia: null;
+    seekableMedia: null;
+}>({
     room: async ({ browser }, use: (room: RoomServer) => Promise<void>): Promise<void> => {
         // The per-test browser comes from roomBrowser; the shared one is
         // deliberately untouched here.
@@ -106,20 +183,36 @@ const test = base.extend<{ room: RoomServer; roomBrowser: Browser; decodableMedi
         await browser.close();
     },
     // Declared by tests that need real media decode. The probe result is
-    // cached per engine (first use runs it), so the cost is once per
-    // project; tests skip with a documented reason where decode fails.
+    // cached per engine (first use runs it); tests skip with a documented
+    // reason where decode fails.
     decodableMedia: async (
         { roomBrowser, browserName },
         use: (value: null) => Promise<void>,
         testInfo,
     ): Promise<void> => {
-        let probe = decodeProbeCache.get(browserName);
+        let probe = capabilityProbeCache.get(browserName);
         if (probe === undefined) {
-            probe = probeEngineDecoding(roomBrowser);
-            decodeProbeCache.set(browserName, probe);
+            probe = probeEngineCapabilities(roomBrowser);
+            capabilityProbeCache.set(browserName, probe);
         }
-        const decodes = await probe;
-        testInfo.skip(!decodes, DECODE_SKIP_REASON);
+        const capabilities = await probe;
+        testInfo.skip(!capabilities.decodes, DECODE_SKIP_REASON);
+        await use(null);
+    },
+    // Declared by tests whose choreography seeks a PLAYING element (host
+    // rewinds, precise follows). Implies decodableMedia.
+    seekableMedia: async (
+        { roomBrowser, browserName },
+        use: (value: null) => Promise<void>,
+        testInfo,
+    ): Promise<void> => {
+        let probe = capabilityProbeCache.get(browserName);
+        if (probe === undefined) {
+            probe = probeEngineCapabilities(roomBrowser);
+            capabilityProbeCache.set(browserName, probe);
+        }
+        const capabilities = await probe;
+        testInfo.skip(!capabilities.seeks, SEEK_SKIP_REASON);
         await use(null);
     },
 });
@@ -390,8 +483,8 @@ test('an approved viewer joins mid-play and stays in sync', async ({ room, roomB
     expect(drift).toBeLessThan(1.5);
 });
 
-test('a small host seek applies precisely to the viewer', async ({ room, roomBrowser, decodableMedia }): Promise<void> => {
-    void decodableMedia;
+test('a small host seek applies precisely to the viewer', async ({ room, roomBrowser, seekableMedia }): Promise<void> => {
+    void seekableMedia;
     const page = await roomBrowser.newPage();
     await bootHost(page, room);
     await playVideo(page);
@@ -400,7 +493,9 @@ test('a small host seek applies precisely to the viewer', async ({ room, roomBro
 
     const viewer = await seatViewer(page, roomBrowser, room);
     await untilVideo(viewer, (state) => !state.paused && state.ready >= 2, 'viewer playing', PLAYBACK_TIMEOUT);
-    await untilVideo(page, (state) => state.position >= 0.5 && state.position < 2, 'host near 1s');
+    // Lower bound only: a windowed range on a looping clip aliases with
+    // the poll cadence and can be skipped forever (see the ended test).
+    await untilVideo(page, (state) => state.position >= 0.5, 'host advancing again');
 
     // 1 -> 2 seconds: under the 5s drift threshold, must still apply exactly.
     await seekVideo(page, 2);
@@ -516,8 +611,8 @@ test('viewer follows successive host media switches through reloads (red → gre
     await switchMediaAndFollow(host, viewer, room, 'blue.mp4');
 });
 
-test('end of media pauses the whole room once, without a restart loop', async ({ room, roomBrowser, decodableMedia }): Promise<void> => {
-    void decodableMedia;
+test('end of media pauses the whole room once, without a restart loop', async ({ room, roomBrowser, seekableMedia }): Promise<void> => {
+    void seekableMedia;
     const host = await roomBrowser.newPage();
     await bootHost(host, room);
     await playVideo(host);
@@ -613,20 +708,28 @@ test('a truncated media file classifies as a media failure without crashing', as
     await untilVideo(page, (state) => !state.hidden, 'admitted with media visible');
     await playVideo(page);
 
-    await expect
-        .poll(
-            async (): Promise<boolean> => {
-                const codes = await issueCodes(page);
-                return MEDIA_FAILURE_CODES.some((code) => codes.includes(code));
-            },
-            {
-                timeout: 25_000,
-                message: 'waiting for the truncated-media failure to classify',
-            },
-        )
-        .toBe(true);
+    // Chromium and Firefox fire a media error when playback runs off the
+    // end of the available data; WebKit instead stalls the fetch silently
+    // and never fires `error` (verified on Linux WebKit 26.6), so there is
+    // nothing for the app to classify there — the classification
+    // expectation applies only to engines that report the failure.
+    if (test.info().project.name !== 'webkit') {
+        await expect
+            .poll(
+                async (): Promise<boolean> => {
+                    const codes = await issueCodes(page);
+                    return MEDIA_FAILURE_CODES.some((code) => codes.includes(code));
+                },
+                {
+                    timeout: 25_000,
+                    message: 'waiting for the truncated-media failure to classify',
+                },
+            )
+            .toBe(true);
+    }
 
-    // No crash: the fallback stays hidden and the element stays queryable.
+    // No crash on EVERY engine: the fallback stays hidden and the element
+    // stays queryable even while the engine stalls or errors.
     const fallbackHidden = await page.evaluate((): boolean => {
         const fallback = document.querySelector('#startup-fallback');
         return fallback === null || !(fallback instanceof HTMLElement) || (fallback.hidden as boolean);
