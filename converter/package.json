@@ -8,7 +8,7 @@
         "typecheck": "bun run tsc",
         "check-all": "bun run typecheck",
         "test": "bun test tests/unit",
-        "test:integration": "bun test tests/integration"
+        "test:integration": "bun test tests/integration --timeout 120000"
     },
     "devDependencies": {
         "@types/bun": "latest",

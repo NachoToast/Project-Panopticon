@@ -1,4 +1,3 @@
-
 async function prompt(text: string): Promise<string> {
     process.stdout.write(text);
 
@@ -14,16 +13,16 @@ async function prompt(text: string): Promise<string> {
             }
         }
 
-        process.stdin.on("data", handleData);
-    })
+        process.stdin.on('data', handleData);
+    });
 }
 
 export async function getTargetFolder(): Promise<string> {
-    return await prompt("Enter target folder path: ");
+    return await prompt('Enter target folder path: ');
 }
 
 export async function getTargetExtension(): Promise<string> {
-    const value = await prompt("Enter file extension: ");
+    const value = await prompt('Enter file extension: ');
 
     return value.replaceAll('.', '');
 }
