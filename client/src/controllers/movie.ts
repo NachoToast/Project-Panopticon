@@ -64,7 +64,7 @@ export function addListeners(): void {
 
         update();
 
-        makeAudioController();
+        element.onvolumechange = () => localStorage.setItem(LOCAL_STORAGE_KEY, element.volume.toString());
     });
 
     socket.on(ServerEvents.Cinema.Playing, (_, time) => {
@@ -133,23 +133,4 @@ function getStoredVolume(): number {
     if (Number.isNaN(stored) || stored < 0 || stored > 1) return DEFAULT_VOLUME;
 
     return stored;
-}
-
-function makeAudioController(): void {
-    const audioContext = new AudioContext();
-    const audioSource = audioContext.createMediaElementSource(element);
-    const gainNode = audioContext.createGain();
-
-    audioSource.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-
-    function handleVolumeChange(): void {
-        localStorage.setItem(LOCAL_STORAGE_KEY, String(element.volume));
-
-        gainNode.gain.value = 3 + 2 * element.volume;
-    }
-
-    element.onvolumechange = handleVolumeChange;
-
-    handleVolumeChange();
 }
