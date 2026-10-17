@@ -62,5 +62,21 @@ export default tseslint.config(
             '@typescript-eslint/prefer-readonly': 'error',                  // Immutability is always preferred.
             '@typescript-eslint/switch-exhaustiveness-check': 'error',      // Exhaustiveness checks are always good.
         }
-    }
+    },
+    {
+        // serve.mjs is production Node code (the `start` script entry),
+        // linted type-aware here and type-CHECKED by tsc with checkJs
+        // (see tsconfig.node.json). Two rules cannot read JSDoc and have
+        // no TS annotation syntax in plain JavaScript:
+        // - no-undef: subsumed by checkJs (Node globals come from
+        //   @types/node there); typescript-eslint itself disables this
+        //   rule for every file type it type-checks.
+        // - explicit-function-return-type: serve.mjs documents every
+        //   return type as JSDoc @returns, which tsc enforces.
+        files: ['serve.mjs'],
+        rules: {
+            'no-undef': 'off',
+            '@typescript-eslint/explicit-function-return-type': 'off',
+        },
+    },
 );
