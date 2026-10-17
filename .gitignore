@@ -12,5 +12,9 @@ yarn.lock
 coverage/
 *.log
 
+# Test artifacts
+test-results/
+playwright-report/
+
 # dev env
 .direnv
