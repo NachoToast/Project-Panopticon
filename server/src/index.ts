@@ -1,47 +1,44 @@
-import { createServer } from 'http';
-import { Server } from 'socket.io';
-import { Admins, Cinema, WaitingRoom } from './Rooms/index.js';
-import { ClientEvents, ServerEvents } from './shared/index.js';
-import { validateConnection } from './validation.js';
+import { createApplication } from './app.js';
+
+/**
+ * Startup wiring only: read the port, create the application, listen, and
+ * shut down gracefully on SIGINT/SIGTERM. All composition lives in
+ * src/app.ts; importing domain modules never starts a server.
+ */
+
+/** Grace period before a stuck connection may wedge shutdown forever. */
+const SHUTDOWN_FORCE_EXIT_MS = 5_000;
 
 const PORT = process.env['PORT'] ?? 5_000;
 
-const server = createServer();
+const app = createApplication();
 
-const io = new Server<ClientEvents.All, ServerEvents.All>(server, {
-    cors: { origin: '*' },
+app.httpServer.listen(PORT, () => {
+    app.logger.info(`Running on http://localhost:${PORT.toString()}`);
 });
 
-export const Rooms = {
-    Admins: new Admins(),
-    Cinema: new Cinema(),
-    WaitingRoom: new WaitingRoom(),
-};
+function shutdown(): void {
+    // A connection that refuses to drain must not hang the process:
+    // force a non-zero exit after the grace period elapses.
+    const forceExit = setTimeout((): void => {
+        app.logger.error(
+            `graceful shutdown exceeded ${SHUTDOWN_FORCE_EXIT_MS.toString()}ms; forcing exit`,
+        );
+        process.exit(1);
+    }, SHUTDOWN_FORCE_EXIT_MS);
 
-let lastApplicationState = '';
-
-export function logApplicationState(): void {
-    const newState = [
-        Rooms.Admins.toString(),
-        Rooms.Cinema.toString(),
-        Rooms.WaitingRoom.toString(),
-    ].join('\n');
-
-    if (lastApplicationState === newState) return;
-
-    lastApplicationState = newState;
-
-    process.stdout.moveCursor(0, -4);
-    process.stdout.clearScreenDown();
-
-    console.log(`=== [${new Date().toLocaleTimeString('en-NZ')}] ===`);
-    console.log(lastApplicationState);
+    app.close().then(
+        (): void => {
+            clearTimeout(forceExit);
+            process.exit(0);
+        },
+        (error: unknown): void => {
+            clearTimeout(forceExit);
+            app.logger.error('graceful shutdown failed', error);
+            process.exit(1);
+        },
+    );
 }
 
-io.on('connection', async (socket) => {
-    await validateConnection(socket);
-});
-
-server.listen(PORT, () => {
-    console.log(`Running on http://localhost:${PORT.toString()}`);
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

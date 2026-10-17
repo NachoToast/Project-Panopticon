@@ -74,6 +74,12 @@ export function makeCard(
         const approveButton = makeButton('approve');
 
         approveButton.onclick = (): void => {
+            // In-flight guard: a double click must not send a second
+            // approve. The button (whole card) is removed when the
+            // waiting-room list updates with this user's Left event, so the
+            // disabled state only outlives the click while the round-trip
+            // is pending.
+            approveButton.disabled = true;
             socket.emit(ClientEvents.Admin.Approve, user);
         };
 
