@@ -15,7 +15,7 @@
     "scripts": {
         "build": "tsc && vite build",
         "typecheck": "tsc && tsc --project tsconfig.node.json",
-        "lint": "eslint src --max-warnings=0",
+        "lint": "eslint src tests serve.mjs --max-warnings=0",
         "check-all": "pnpm run typecheck && pnpm run lint",
         "test": "vitest run",
         "test:browser": "playwright test",
