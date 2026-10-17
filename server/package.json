@@ -14,8 +14,8 @@
     },
     "scripts": {
         "build": "tsc",
-        "typecheck": "tsc --noEmit",
-        "lint": "eslint src --max-warnings=0",
+        "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
+        "lint": "eslint src tests --max-warnings=0",
         "check-all": "pnpm run typecheck && pnpm run lint",
         "test": "vitest run",
         "start": "node build/index.js",
