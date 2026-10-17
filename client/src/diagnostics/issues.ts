@@ -122,7 +122,8 @@ const GLOBAL_SCOPE = 'global';
 /** Incident family shared by related media source errors (network + decode). */
 const MEDIA_PLAYBACK_INCIDENT = 'media-playback';
 
-const MAX_MEDIA_ID_LENGTH = 64;
+/** Sanitization bound for media ids accepted into an issue (tighter than the wire cap). */
+const MAX_ISSUE_MEDIA_ID_LENGTH = 64;
 const MAX_EVENT_TYPE_LENGTH = 64;
 
 /** Module-local incident counter; ids must not depend on a secure context. */
@@ -208,7 +209,7 @@ function normalizeIssueInput(input: unknown): NormalizedIssueInput {
     return {
         code: isIssueCode(rawCode) ? rawCode : IssueCode.Unexpected,
         mediaId:
-            typeof rawMediaId === 'string' && rawMediaId.length > 0 && rawMediaId.length <= MAX_MEDIA_ID_LENGTH
+            typeof rawMediaId === 'string' && rawMediaId.length > 0 && rawMediaId.length <= MAX_ISSUE_MEDIA_ID_LENGTH
                 ? rawMediaId
                 : undefined,
         error,
