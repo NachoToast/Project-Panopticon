@@ -4,6 +4,11 @@ import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
+    {
+        // Standalone `ignores` objects are global; tests/scripts holds plain-JS
+        // Node scripts that run outside type-aware linting.
+        ignores: ['eslint.config.js', 'build/**', 'node_modules/**', 'tests/scripts/**'],
+    },
     eslint.configs.recommended,
     ...tseslint.configs.strictTypeChecked,
     ...tseslint.configs.stylisticTypeChecked,
@@ -14,7 +19,6 @@ export default tseslint.config(
                 tsconfigRootDir: import.meta.dirname,
             },
         },
-        ignores: ['eslint.config.js', 'build/**', 'node_modules/**'],
         rules: {
             // Possible Problems (https://eslint.org/docs/latest/rules/#possible-problems)
 

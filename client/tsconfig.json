@@ -18,7 +18,7 @@
 
         // Emit
         "outDir": "build",
-        "rootDir": "./src",
+        "rootDir": "./",
         "noEmit": true,
         "removeComments": true,
         "sourceMap": true,
@@ -36,5 +36,5 @@
         // Completeness
         "skipLibCheck": true
     },
-    "include": ["src/**/*"]
+    "include": ["src/**/*", "tests/**/*", "*.config.ts"]
 }

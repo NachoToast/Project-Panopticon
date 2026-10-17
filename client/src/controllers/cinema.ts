@@ -3,11 +3,11 @@ import { socket } from '../main';
 import { BaseUser, ServerEvents } from '../shared';
 import { getElement } from '../util';
 
-const element = getElement<HTMLDivElement>('#cinema');
+const element = getElement('#cinema', HTMLDivElement);
 
-const title = getElement<HTMLHeadingElement>('#cinema > h3');
+const title = getElement('#cinema > h3', HTMLHeadingElement);
 
-const userContainer = getElement<HTMLDivElement>('#cinema > div');
+const userContainer = getElement('#cinema > div', HTMLDivElement);
 
 const users = new Map<string, HTMLDivElement>();
 
