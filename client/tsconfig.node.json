@@ -1,0 +1,24 @@
+{
+    // https://www.typescriptlang.org/tsconfig/
+    //
+    // Node-only companion project to tsconfig.json: type-CHECKS the
+    // production server script (serve.mjs) with checkJs. The main project
+    // merely allows importing it (allowJs) for the tests; this project is
+    // what the `typecheck` script runs to hold serve.mjs itself to the same
+    // strictness as the TypeScript sources.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        // Modules — a real Node-run script, so Node resolution semantics
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+
+        // Language and Environment — Node APIs only, no DOM
+        "lib": ["es2023"],
+        "types": ["node"],
+
+        // JS files are checked, not just resolved
+        "allowJs": true,
+        "checkJs": true
+    },
+    "include": ["serve.mjs", "src/types/**/*.d.ts"]
+}

@@ -50,7 +50,6 @@ export interface PlaybackMediaEvent {
     readonly target: unknown;
 }
 
-
 export interface PlaybackMediaElement {
     readonly paused: boolean;
     readonly ended: boolean;
@@ -78,37 +77,30 @@ export interface PlaybackMediaElement {
     ): void;
 }
 
-
 export interface PlaybackElementFactory {
     createSource(src: string, type: string): PlaybackSourceChild;
     createTrack(label: string, srclang: string, src: string): PlaybackTrackChild;
 }
 
-
 export interface PlaybackChannel {
-
     sendCommand(event: PlaybackCommandEvent, command: PlaybackCommand): void;
     /** Announces the configured media identity at host admission. */
     announceMedia(mediaId: string): void;
 }
-
 
 export interface PlaybackTimers {
     schedule(handler: () => void, ms: number): unknown;
     cancel(handle: unknown): void;
 }
 
-
 export interface VolumePreferences {
     initial(): number;
     persist(volume: number): void;
 }
 
-
 export interface PlaybackMediaConfig {
     /** Resolved source URL, e.g. 'data/film.mp4'. */
     readonly source: string;
-
     readonly type: string;
     /** Null when settings are unusable. */
     readonly mediaId: string | null;
@@ -159,7 +151,6 @@ const DRIFT_THRESHOLD_SECONDS = 5;
 /** Tolerance for an exact seek, absorbs player rounding. */
 const SEEK_EPSILON_SECONDS = 0.25;
 
-
 const HAVE_CURRENT_DATA = 2;
 
 /** Bound on waiting for the first usable frame before a SlowLoading report. */
@@ -207,7 +198,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
     /** Snapshots only arrive over a live socket. */
     let connected = true;
     let playInFlight = false;
-
     let loadedMediaId: string | null = null;
     /** Bumped on every load restart so deferred load work can bail. */
     let loadGeneration = 0;
@@ -224,7 +214,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         });
     }
 
-
     function resolveIssues(codes: readonly IssueCode[]): void {
         for (const issue of store.getIssueSnapshot().issues) {
             if (codes.includes(issue.code)) {
@@ -232,7 +221,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
             }
         }
     }
-
 
     function invalidateCurrentLoad(): void {
         opToken += 1;
@@ -318,7 +306,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         }
     }
 
-
     function onDataUsable(): void {
         if (element.readyState < HAVE_CURRENT_DATA) {
             return;
@@ -328,7 +315,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
     }
 
     // --- reconciliation ----------------------------------------------------------
-
 
     function clampToDuration(position: number): number {
         const duration = element.duration;
@@ -355,7 +341,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         programmatic.seeks += 1;
         element.currentTime = target;
     }
-
 
     function reconcile(exact: boolean): void {
         if (!connected || mismatchActive) {
@@ -399,7 +384,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         }
 
         loadedMediaId = media.mediaId;
-
         invalidateCurrentLoad();
         armSlowLoadTimer();
 
@@ -414,7 +398,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
                 `data/${subtitle.file}`,
             );
             if (!sawFirstTrack) {
-
                 track.default = true;
                 sawFirstTrack = true;
             }
@@ -579,7 +562,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
 
     // --- public surface -------------------------------------------------------------
 
-
     function startPlaybackInternal(): Promise<void> {
         if (media.mediaId === null) {
             report(IssueCode.InvalidConfiguration);
@@ -629,7 +611,6 @@ export function createPlaybackController(deps: PlaybackControllerDeps): Playback
         },
 
         handleDisconnect: (reason: string): void => {
-
             connected = false;
             isAdmin = false;
             invalidateCurrentLoad();

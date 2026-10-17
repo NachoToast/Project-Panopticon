@@ -1,3 +1,4 @@
+import { isMediaId } from '../shared';
 import { DiagnosticEvent, DIAGNOSTIC_HISTORY_LIMIT, isSafeToken, Issue, MAX_READINGS_PER_EVENT } from './snapshot';
 
 /**
@@ -50,7 +51,9 @@ export function formatDiagnosticsReport(input: DiagnosticsReportInput): string {
             `first=${toIso(issue.firstSeen)}`,
             `last=${toIso(issue.lastSeen)}`,
         ];
-        if (issue.mediaId !== undefined && isSafeToken(issue.mediaId)) {
+        // Media ids are wire identities gated by isMediaId (length and
+        // charset) rather than the token rule used for other fields.
+        if (issue.mediaId !== undefined && isMediaId(issue.mediaId)) {
             parts.push(`media=${issue.mediaId}`);
         }
         if (issue.mediaErrorCode !== undefined) {
