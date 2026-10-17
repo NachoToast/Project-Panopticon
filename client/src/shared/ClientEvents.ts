@@ -1,4 +1,5 @@
 import { BaseUser } from './BaseUser.js';
+import { PlaybackCommand } from './PlaybackState.js';
 
 export const enum Cinema {
     Play = 'cinema:play',
@@ -6,6 +7,9 @@ export const enum Cinema {
     Pause = 'cinema:pause',
 
     Seek = 'cinema:seek',
+
+    /** Host announces its configured media identity (admin only). */
+    Select = 'cinema:select',
 }
 
 export const enum Admin {
@@ -17,9 +21,10 @@ export const enum Admin {
 }
 
 export interface All {
-    [Cinema.Play]: (time: number) => void;
-    [Cinema.Pause]: (time: number) => void;
-    [Cinema.Seek]: (time: number) => void;
+    [Cinema.Play]: (command: PlaybackCommand) => void;
+    [Cinema.Pause]: (command: PlaybackCommand) => void;
+    [Cinema.Seek]: (command: PlaybackCommand) => void;
+    [Cinema.Select]: (mediaId: string) => void;
 
     [Admin.Kick]: (target: BaseUser, reason?: string) => void;
     [Admin.Ban]: (target: BaseUser, reason?: string) => void;
