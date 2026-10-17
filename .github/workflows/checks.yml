@@ -50,6 +50,12 @@ jobs:
       - name: Bootstrap test media fixtures
         run: node client/tests/scripts/generate-media.mjs
 
+      # settings.json is user-local (gitignored) but the production
+      # typecheck and build statically import it (see client/src/config.ts).
+      # The tracked template is shape-compatible, so materialize it for CI.
+      - name: Materialize client settings.json from template
+        run: cp client/settings.example.json client/settings.json
+
       - name: Client typecheck + lint
         run: pnpm --dir client run check-all
 
