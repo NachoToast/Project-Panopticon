@@ -1,4 +1,5 @@
 import { BaseUser } from './BaseUser.js';
+import { CommandRejection, PlaybackSnapshot } from './PlaybackState.js';
 
 export const enum Connection {
     Accepted = 'connection:accepted',
@@ -24,6 +25,12 @@ export const enum Cinema {
     Paused = 'cinema:paused',
 
     Seeked = 'cinema:seeked',
+
+    /** Authoritative state broadcast (e.g. after a media selection). */
+    State = 'cinema:state',
+
+    /** Tells a sender their play/pause/seek/select command was refused. */
+    CommandRejected = 'cinema:command-rejected',
 }
 
 export const enum Admin {
@@ -49,10 +56,12 @@ export interface All {
 
     [Cinema.Joined]: (user: BaseUser) => void;
     [Cinema.Left]: (user: BaseUser) => void;
-    [Cinema.Users]: (users: BaseUser[], playing: boolean, time: number) => void;
-    [Cinema.Playing]: (admin: BaseUser, time: number) => void;
-    [Cinema.Paused]: (admin: BaseUser, time: number) => void;
-    [Cinema.Seeked]: (admin: BaseUser, time: number) => void;
+    [Cinema.Users]: (users: BaseUser[], snapshot: PlaybackSnapshot) => void;
+    [Cinema.Playing]: (admin: BaseUser, snapshot: PlaybackSnapshot) => void;
+    [Cinema.Paused]: (admin: BaseUser, snapshot: PlaybackSnapshot) => void;
+    [Cinema.Seeked]: (admin: BaseUser, snapshot: PlaybackSnapshot) => void;
+    [Cinema.State]: (snapshot: PlaybackSnapshot) => void;
+    [Cinema.CommandRejected]: (rejection: CommandRejection) => void;
 
     [Admin.Added]: (user: BaseUser) => void;
     [Admin.Left]: (user: BaseUser) => void;
