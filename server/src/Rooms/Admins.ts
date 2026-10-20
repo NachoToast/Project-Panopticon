@@ -1,13 +1,25 @@
-import { Rooms } from '../index.js';
+import type { RoomServices } from '../rooms.js';
 import { BaseUser } from '../shared/BaseUser.js';
 import { ClientEvents, ServerEvents } from '../shared/index.js';
 import { User } from '../User.js';
-import { addBannedIp } from '../validation.js';
+import type { Cinema } from './Cinema.js';
 import { Room } from './Room.js';
+import type { WaitingRoom } from './WaitingRoom.js';
+
+export const ADMINS_ROOM_NAME = 'admins';
+
+/** The sibling rooms admin actions target. */
+export interface AdminPeers {
+    readonly cinema: Cinema;
+    readonly waitingRoom: WaitingRoom;
+}
 
 export class Admins extends Room {
-    public constructor() {
-        super('admins');
+    private readonly peers: AdminPeers;
+
+    public constructor(services: RoomServices, peers: AdminPeers) {
+        super(ADMINS_ROOM_NAME, services);
+        this.peers = peers;
     }
 
     protected override onJoin(user: User): void {
@@ -32,7 +44,7 @@ export class Admins extends Room {
         const { socket } = user;
         const admin = user.toBasic();
 
-        socket.on(ClientEvents.Admin.Kick, (target, reason) => {
+        this.listen(user, ClientEvents.Admin.Kick, (target, reason) => {
             if (target.isAdmin) return;
 
             const targetUser = this.getUserFromOtherRooms(target);
@@ -51,21 +63,26 @@ export class Admins extends Room {
         const { socket } = user;
         const admin = user.toBasic();
 
-        socket.on(ClientEvents.Admin.Ban, (target, reason) => {
+        this.listen(user, ClientEvents.Admin.Ban, (target, reason) => {
             if (target.isAdmin) return;
 
             const targetUser = this.getUserFromOtherRooms(target);
             if (targetUser === null) return;
 
-            for (const user of this.getIdenticalUsers(targetUser.ip)) {
-                user.socket.emit(ServerEvents.Connection.Rejected, reason);
-                user.socket.disconnect();
+            // PRESERVED POLICY QUIRK (see admission.test.ts):
+            // getIdenticalUsers scans THIS room only, so on loopback the
+            // disconnect loop hits identical-ip admins, not the target.
+            // The ip ban itself still lands. Deliberate pending policy
+            // review, do not "fix" silently.
+            for (const identical of this.getIdenticalUsers(targetUser.ip)) {
+                identical.socket.emit(ServerEvents.Connection.Rejected, reason);
+                identical.socket.disconnect();
                 socket.broadcast
                     .to(this.roomName)
                     .emit(ServerEvents.Admin.Banned, admin, target, reason);
             }
 
-            addBannedIp(targetUser.ip);
+            this.services.access.banIp(targetUser.ip);
         });
     }
 
@@ -73,12 +90,30 @@ export class Admins extends Room {
         const { socket } = user;
         const admin = user.toBasic();
 
-        socket.on(ClientEvents.Admin.Approve, async (target) => {
-            const targetUser = this.getUserFromOtherRooms(target);
-            if (targetUser === null) return;
+        this.listen(user, ClientEvents.Admin.Approve, async (target) => {
+            // Approval moves a user OUT of the waiting room, full stop.
+            // A target that is not currently waiting (already admitted,
+            // already gone, or an admin) is a no-op: re-admitting an active
+            // member would duplicate their entries and used to strip their
+            // live handlers via the old removeAllListeners cleanup.
+            const targetUser = this.peers.waitingRoom.tryGetUser(target);
+            if (targetUser === undefined) return;
 
-            await Rooms.WaitingRoom.remove(targetUser);
-            await Rooms.Cinema.add(targetUser);
+            await this.peers.waitingRoom.remove(targetUser);
+            try {
+                await this.peers.cinema.add(targetUser);
+            } catch (error) {
+                // Admission into the cinema failed (e.g. join rejected):
+                // seat them back in the waiting room instead of leaving them
+                // attached to nothing.
+                this.services.logger.error(
+                    'cinema admission failed; returning to waiting room',
+                    target.username,
+                    error,
+                );
+                await this.peers.waitingRoom.add(targetUser);
+                return;
+            }
 
             socket.broadcast
                 .to(this.roomName)
@@ -88,11 +123,11 @@ export class Admins extends Room {
 
     private getUserFromOtherRooms(baseUser: BaseUser): User | null {
         const user =
-            Rooms.Cinema.tryGetUser(baseUser) ??
-            Rooms.WaitingRoom.tryGetUser(baseUser);
+            this.peers.cinema.tryGetUser(baseUser) ??
+            this.peers.waitingRoom.tryGetUser(baseUser);
 
         if (user === undefined) {
-            console.error(
+            this.services.logger.error(
                 `User ${baseUser.username} not found`,
                 new Error().stack,
             );
