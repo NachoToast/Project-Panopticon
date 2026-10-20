@@ -19,7 +19,6 @@ export interface ProjectionClock {
     resetEpoch(): void;
 }
 
-
 export function createProjectionClock(now: () => number = (): number => performance.now()): ProjectionClock {
     let current: PlaybackSnapshot | null = null;
     let receivedAtMs = 0;

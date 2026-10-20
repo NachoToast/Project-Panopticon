@@ -24,6 +24,7 @@
         "sourceMap": true,
 
         // Interop Constraints
+        "allowJs": true, // lets tests import serve.mjs (the production server)
         "esModuleInterop": true,
         "forceConsistentCasingInFileNames": true,
         "isolatedModules": true,
@@ -36,5 +37,5 @@
         // Completeness
         "skipLibCheck": true
     },
-    "include": ["src/**/*", "tests/**/*", "*.config.ts"]
+    "include": ["src/**/*", "tests/**/*", "*.config.ts", "serve.mjs"]
 }

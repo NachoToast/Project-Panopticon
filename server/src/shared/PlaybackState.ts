@@ -50,7 +50,6 @@ export type CommandRejection =
 /** Charset for a normalised identity, ASCII filename safe plus /. */
 const MEDIA_ID_PATTERN = /^[\w.\-/]+$/;
 
-
 export function isMediaId(value: unknown): value is string {
     if (typeof value !== 'string') {
         return false;
@@ -114,7 +113,6 @@ const COMMAND_REJECTIONS: readonly CommandRejection[] = [
     'not-authorized',
     'not-in-cinema',
 ];
-
 
 export function isCommandRejection(value: unknown): value is CommandRejection {
     return typeof value === 'string' && (COMMAND_REJECTIONS as readonly string[]).includes(value);
