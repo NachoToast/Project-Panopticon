@@ -1,0 +1,10 @@
+{
+    // https://www.typescriptlang.org/tsconfig/
+    "extends": "../tsconfig.json",
+    "compilerOptions": {
+        // Tests live outside src/, so widen rootDir; nothing is emitted.
+        "noEmit": true,
+        "rootDir": "../"
+    },
+    "include": ["./**/*", "../vitest.config.ts"]
+}
