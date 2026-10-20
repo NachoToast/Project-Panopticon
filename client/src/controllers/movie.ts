@@ -1,8 +1,8 @@
 import { MOVIE_SOURCE, MOVIE_TYPE, socket, SUBTITLES } from '../main';
 import { ClientEvents, ServerEvents } from '../shared';
-import { getElement } from '../util';
+import { getElement, safeStorage } from '../util';
 
-const element = getElement<HTMLVideoElement>('#movie');
+const element = getElement('#movie', HTMLVideoElement);
 
 const LOCAL_STORAGE_KEY = 'volume';
 const DEFAULT_VOLUME = 0.15; // 100% is always crazy loud
@@ -41,11 +41,7 @@ export function addListeners(): void {
         element.volume = getStoredVolume();
         element.appendChild(source);
 
-        for (const subtitle of SUBTITLES as {
-            label: string;
-            srclang: string;
-            file: string;
-        }[]) {
+        for (const subtitle of SUBTITLES) {
             const track = document.createElement('track');
             track.kind = 'subtitles';
 
@@ -63,8 +59,6 @@ export function addListeners(): void {
         }
 
         update();
-
-        element.onvolumechange = () => localStorage.setItem(LOCAL_STORAGE_KEY, element.volume.toString());
     });
 
     socket.on(ServerEvents.Cinema.Playing, (_, time) => {
@@ -127,10 +121,20 @@ element.onseeked = (): void => {
 
 /** Returns the user's saved volume, or the default if none is saved. */
 function getStoredVolume(): number {
-    const stored = Number.parseFloat(localStorage.getItem(LOCAL_STORAGE_KEY) ?? '');
-
-    // NaN covers missing, empty, and corrupt values; the range check covers hand-edited ones
-    if (Number.isNaN(stored) || stored < 0 || stored > 1) return DEFAULT_VOLUME;
-
-    return stored;
+    return safeStorage.readStoredNumber(LOCAL_STORAGE_KEY, {
+        fallback: DEFAULT_VOLUME,
+        minimum: 0,
+        maximum: 1,
+    });
 }
+
+/**
+ * Persists the native element volume whenever the user changes it. Native
+ * audio only: element.volume is the single volume pathway, and persistence
+ * failures are contained by the storage wrapper.
+ */
+function persistVolume(): void {
+    safeStorage.writeStoredString(LOCAL_STORAGE_KEY, String(element.volume));
+}
+
+element.onvolumechange = persistVolume;
