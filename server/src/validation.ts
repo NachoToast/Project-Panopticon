@@ -7,6 +7,12 @@ const bannedIps = new Set<string>();
 
 const activeUsernames = new Set<string>();
 
+const adminUsername = process.env['ADMIN_USERNAME']?.trim().toLowerCase() || null;
+
+if (adminUsername !== null) {
+    console.log(`Admin username is ${adminUsername}`);
+}
+
 export function removeActiveUsername(username: string): void {
     activeUsernames.delete(username.toLowerCase());
 }
@@ -58,7 +64,7 @@ export async function validateConnection(socket: ServerSocket): Promise<void> {
 
     activeUsernames.add(usernameLower);
 
-    const isAdmin = Rooms.Admins.isEmpty();
+    const isAdmin = Rooms.Admins.isEmpty() && (adminUsername === null || usernameLower === adminUsername);
 
     const user = new User(socket, username, isAdmin);
 
