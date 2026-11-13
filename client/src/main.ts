@@ -12,7 +12,7 @@ import {
 
 // Re-exported for the controllers that import them from here, the
 // derivation lives in config.ts.
-export { MOVIE_SOURCE, MOVIE_TYPE, SUBTITLES } from './config';
+export { MOVIE_MEDIA_ID, MOVIE_SOURCE, MOVIE_TYPE, SUBTITLES } from './config';
 
 export const socket: Socket<ServerEvents.All, ClientEvents.All> = io(
     resolveSocketUrl(location, readSocketOverride(location.search)),
