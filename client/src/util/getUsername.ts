@@ -1,7 +1,8 @@
 import { EntryCard } from '../controllers';
 import { getElement } from './getElement';
+import { safeStorage } from './storage';
 
-const usernameInput = getElement<HTMLInputElement>('#username-input');
+const usernameInput = getElement('#username-input', HTMLInputElement);
 
 const LOCAL_STORAGE_KEY = 'username';
 
@@ -14,7 +15,7 @@ export function getUsername(): Promise<string> {
 
             const username = usernameInput.value.trim();
 
-            localStorage.setItem(LOCAL_STORAGE_KEY, username);
+            safeStorage.writeStoredString(LOCAL_STORAGE_KEY, username);
 
             window.removeEventListener('keypress', handleKeyPress);
 
@@ -27,7 +28,7 @@ export function getUsername(): Promise<string> {
 
         window.addEventListener('keypress', handleKeyPress);
 
-        const storedUsername = localStorage.getItem(LOCAL_STORAGE_KEY);
+        const storedUsername = safeStorage.readStoredString(LOCAL_STORAGE_KEY);
 
         if (storedUsername !== null) {
             usernameInput.value = storedUsername;

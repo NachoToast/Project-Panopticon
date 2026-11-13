@@ -137,6 +137,28 @@ pnpm typecheck   # TypeScript type checking
 pnpm lint        # ESLint (client and server only)
 ```
 
+### Testing
+
+Unit tests run with vitest (client/server) and bun test (converter):
+
+```sh
+pnpm --dir client run test
+pnpm --dir server run test
+cd converter && bun run test && bun run test:integration
+```
+
+Browser tests run Playwright against a real browser. `test:browser` pins chromium for now — to cover the rest, install the other engines (`pnpm --dir client exec playwright install firefox webkit`) and then run `pnpm --dir client exec playwright test` without the project pin:
+
+```sh
+pnpm --dir client run test:browser
+```
+
+Browser tests need three tiny generated video fixtures (the output is gitignored), so bootstrap them once after cloning:
+
+```sh
+node client/tests/scripts/generate-media.mjs
+```
+
 ### Formatting
 
 This project uses [Prettier](https://prettier.io/) and [EditorConfig](https://editorconfig.org/) for consistent formatting:

@@ -1,6 +1,8 @@
 import { io, Socket } from 'socket.io-client';
-import settings from '../settings.json';
+import { readSocketOverride, resolveSocketUrl, settingsProblem } from './config';
 import { Cinema, EntryCard, Movie, User, WaitingRoom } from './controllers';
+import { issueStore } from './diagnostics/issues';
+import { IssueCode, summarizeEventArgs } from './diagnostics/snapshot';
 import { ClientEvents, ServerEvents } from './shared';
 import './styles';
 import {
@@ -8,18 +10,28 @@ import {
     makeBackgroundCanvas
 } from './util';
 
-export const MOVIE_SOURCE = `data/${settings.file}`;
-
-export const MOVIE_TYPE = settings.type;
-
-export const SUBTITLES = settings.subtitles;
+// Re-exported for the controllers that import them from here, the
+// derivation lives in config.ts.
+export { MOVIE_SOURCE, MOVIE_TYPE, SUBTITLES } from './config';
 
 export const socket: Socket<ServerEvents.All, ClientEvents.All> = io(
-    `ws://${location.host.replace(location.port, '5000')}`,
+    resolveSocketUrl(location, readSocketOverride(location.search)),
     { autoConnect: false },
 );
 
-async function handleLoad(): Promise<void> {
+/**
+ * Initializes the application, called once by the bootstrap entry after the
+ * page has loaded. Kept explicit so a dynamic import cannot miss the load
+ * event, bootstrap owns that wait.
+ */
+export async function initApp(): Promise<void> {
+    if (settingsProblem !== null) {
+        // Reported here rather than at module scope so issue listeners
+        // exist already, and the entry card still works.
+        console.debug('[panopticon] invalid settings.json:', settingsProblem);
+        issueStore.reportIssue({ code: IssueCode.InvalidConfiguration });
+    }
+
     makeBackgroundCanvas();
 
     Cinema.addListeners();
@@ -29,7 +41,8 @@ async function handleLoad(): Promise<void> {
     WaitingRoom.addListeners();
 
     socket.onAny((eventName: string, ...args: unknown[]) => {
-        console.log(`%c${eventName}`, 'color: gray', ...args);
+        // Allowlisted summary only, raw payloads stay out of the log.
+        console.debug(`%c${eventName}`, 'color: gray', summarizeEventArgs(args));
     });
 
     EntryCard.show({
@@ -50,5 +63,3 @@ async function handleLoad(): Promise<void> {
 
     socket.connect();
 }
-
-window.addEventListener('load', () => void handleLoad(), { once: true });
